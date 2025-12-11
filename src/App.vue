@@ -16,6 +16,7 @@ import ExtensionStatus from '@/components/ui/ExtensionStatus.vue'
 import EnvironmentSelector from '@/components/env/EnvironmentSelector.vue'
 import EnvironmentEditor from '@/components/env/EnvironmentEditor.vue'
 import RequestEditor from '@/components/builder/RequestEditor.vue'
+import ConfirmDialogProvider from '@/components/shared/ConfirmDialogProvider.vue'
 import { X, Play } from 'lucide-vue-next'
 
 const requestStore = useRequestStore()
@@ -260,4 +261,7 @@ onUnmounted(() => {
       </div>
     </div>
   </Teleport>
+
+  <!-- Global Confirm Dialog -->
+  <ConfirmDialogProvider />
 </template>

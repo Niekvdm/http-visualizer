@@ -1,8 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, computed } from 'vue'
 import type { CollectionRequest } from '@/types'
-import { useCollectionStore } from '@/stores/collectionStore'
-import { getMethodColor } from '@/utils/formatters'
+import { useDropdownMenu } from '@/composables/useDropdownMenu'
+import { useConfirmDialog } from '@/composables/useConfirmDialog'
+import MethodBadge from '@/components/shared/MethodBadge.vue'
+import DropdownMenu from '@/components/shared/DropdownMenu.vue'
+import DropdownMenuItem from '@/components/shared/DropdownMenuItem.vue'
+import DropdownDivider from '@/components/shared/DropdownDivider.vue'
 import { 
   MoreVertical, 
   Pencil, 
@@ -20,14 +24,25 @@ const props = defineProps<{
   isDragging?: boolean
 }>()
 
-const collectionStore = useCollectionStore()
+const emit = defineEmits<{
+  'select': []
+  'edit': []
+  'run': []
+  'duplicate': []
+  'delete': []
+}>()
 
-// Safe method color that handles undefined request during drag
-const methodColor = computed(() => {
-  if (!props.request?.method) return ''
-  return getMethodColor(props.request.method)
+// Dropdown menu
+const menuRef = ref<HTMLElement | null>(null)
+const { isOpen: showMenu, toggle: toggleMenu, close: closeMenu } = useDropdownMenu(menuRef, {
+  align: 'right',
+  alignOffset: 100,
 })
 
+// Confirm dialog
+const { confirm } = useConfirmDialog()
+
+// Safe computed values that handle undefined request during drag
 const methodDisplay = computed(() => props.request?.method || 'GET')
 const nameDisplay = computed(() => props.request?.name || '')
 
@@ -51,65 +66,25 @@ const authTooltip = computed(() => {
   return labels[props.request.auth.type] || 'Auth'
 })
 
-const emit = defineEmits<{
-  'select': []
-  'edit': []
-  'run': []
-  'duplicate': []
-  'delete': []
-}>()
-
-// Menu state
-const showMenu = ref(false)
-const menuRef = ref<HTMLElement | null>(null)
-const dropdownRef = ref<HTMLElement | null>(null)
-
-function toggleMenu() {
-  showMenu.value = !showMenu.value
-}
-
-function onClickOutside(e: MouseEvent) {
-  const target = e.target as Node
-  if (dropdownRef.value && !dropdownRef.value.contains(target)) {
-    showMenu.value = false
-  }
-}
-
-// Watch for menu open/close to add/remove click listener
-watch(showMenu, (isOpen) => {
-  if (isOpen) {
-    nextTick(() => {
-      document.addEventListener('click', onClickOutside, true)
-    })
-  } else {
-    document.removeEventListener('click', onClickOutside, true)
-  }
-})
-
-// Cleanup on unmount
-onUnmounted(() => {
-  document.removeEventListener('click', onClickOutside, true)
-})
-
 // Menu actions
 function handleEdit() {
   emit('edit')
-  showMenu.value = false
+  closeMenu()
 }
 
 function handleRun() {
   emit('run')
-  showMenu.value = false
+  closeMenu()
 }
 
 function handleDuplicate() {
   emit('duplicate')
-  showMenu.value = false
+  closeMenu()
 }
 
-function handleDelete() {
+async function handleDelete() {
+  closeMenu()
   emit('delete')
-  showMenu.value = false
 }
 </script>
 
@@ -131,12 +106,7 @@ function handleDelete() {
     </div>
 
     <!-- Method badge -->
-    <span 
-      class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-bg)] font-mono shrink-0"
-      :class="methodColor"
-    >
-      {{ methodDisplay }}
-    </span>
+    <MethodBadge :method="methodDisplay" size="xs" />
 
     <!-- Request name -->
     <span class="text-sm text-[var(--color-text)] truncate flex-1">
@@ -169,49 +139,26 @@ function handleDelete() {
         <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
       </button>
 
-      <!-- Dropdown menu -->
-      <Teleport to="body">
-        <div
-          v-if="showMenu"
-          :ref="el => { dropdownRef = el as HTMLElement }"
-          class="fixed z-[200] min-w-[160px] py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded shadow-xl"
-          :style="{
-            top: menuRef ? `${menuRef.getBoundingClientRect().bottom + 4}px` : '0',
-            left: menuRef ? `${menuRef.getBoundingClientRect().left - 100}px` : '0'
-          }"
-        >
-          <button
-            class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-            @click="handleEdit"
-          >
-            <Pencil class="w-4 h-4" />
-            Edit
-          </button>
-          <button
-            class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-            @click="handleRun"
-          >
-            <Play class="w-4 h-4" />
-            Run
-          </button>
-          <button
-            class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-            @click="handleDuplicate"
-          >
-            <Copy class="w-4 h-4" />
-            Duplicate
-          </button>
-          <div class="my-1 border-t border-[var(--color-border)]" />
-          <button
-            class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-            @click="handleDelete"
-          >
-            <Trash2 class="w-4 h-4" />
-            Delete
-          </button>
-        </div>
-      </Teleport>
+      <DropdownMenu
+        v-model="showMenu"
+        :trigger-ref="menuRef"
+        align="right"
+        :align-offset="100"
+      >
+        <DropdownMenuItem :icon="Pencil" @click="handleEdit">
+          Edit
+        </DropdownMenuItem>
+        <DropdownMenuItem :icon="Play" @click="handleRun">
+          Run
+        </DropdownMenuItem>
+        <DropdownMenuItem :icon="Copy" @click="handleDuplicate">
+          Duplicate
+        </DropdownMenuItem>
+        <DropdownDivider />
+        <DropdownMenuItem :icon="Trash2" danger @click="handleDelete">
+          Delete
+        </DropdownMenuItem>
+      </DropdownMenu>
     </div>
   </div>
 </template>
-

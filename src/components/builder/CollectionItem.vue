@@ -1,10 +1,15 @@
 <script setup lang="ts">
-import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch } from 'vue'
 import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useRequestStore } from '@/stores/requestStore'
+import { useDropdownMenu } from '@/composables/useDropdownMenu'
+import { useConfirmDialog, confirmActions } from '@/composables/useConfirmDialog'
 import FolderItem from './FolderItem.vue'
 import RequestItem from './RequestItem.vue'
+import DropdownMenu from '@/components/shared/DropdownMenu.vue'
+import DropdownMenuItem from '@/components/shared/DropdownMenuItem.vue'
+import DropdownDivider from '@/components/shared/DropdownDivider.vue'
 import draggable from 'vuedraggable'
 import { 
   ChevronRight, 
@@ -28,11 +33,18 @@ const emit = defineEmits<{
 
 const collectionStore = useCollectionStore()
 const requestStore = useRequestStore()
+const { confirm } = useConfirmDialog()
 
-const showMenu = ref(false)
+// Dropdown menu
+const menuRef = ref<HTMLElement | null>(null)
+const { isOpen: showMenu, toggle: toggleMenu, close: closeMenu } = useDropdownMenu(menuRef, {
+  align: 'right',
+  alignOffset: 120,
+})
+
+// Rename state
 const isRenaming = ref(false)
 const renameInput = ref('')
-const menuRef = ref<HTMLElement | null>(null)
 
 const isSelected = computed(() => collectionStore.selectedCollectionId === props.collection.id)
 const isCollapsed = computed(() => props.collection.collapsed)
@@ -65,13 +77,11 @@ watch(rootRequests, (newRequests) => {
 
 // Handle folder reorder on drag end
 function onFolderDragEnd() {
-  // Persist the reordered folders from local array
   collectionStore.reorderFolders(props.collection.id, [...localFolders.value])
 }
 
 // Handle root request reorder on drag end
 function onRootRequestDragEnd() {
-  // Persist the current order from local array
   const folderRequests = props.collection.requests.filter(r => r.folderId)
   collectionStore.reorderRequests(props.collection.id, [...localRootRequests.value, ...folderRequests])
 }
@@ -87,7 +97,7 @@ function selectCollection() {
 function startRename() {
   renameInput.value = props.collection.name
   isRenaming.value = true
-  showMenu.value = false
+  closeMenu()
 }
 
 function finishRename() {
@@ -101,21 +111,24 @@ function cancelRename() {
   isRenaming.value = false
 }
 
-function deleteCollection() {
-  if (confirm(`Delete collection "${props.collection.name}" and all its requests?`)) {
+async function deleteCollection() {
+  closeMenu()
+  const confirmed = await confirm(
+    confirmActions.deleteWithWarning(props.collection.name, 'All requests in this collection will be deleted.')
+  )
+  if (confirmed) {
     collectionStore.deleteCollection(props.collection.id)
   }
-  showMenu.value = false
 }
 
 function addFolder() {
   emit('new-folder', props.collection.id)
-  showMenu.value = false
+  closeMenu()
 }
 
 function addRequest() {
   emit('new-request', props.collection.id)
-  showMenu.value = false
+  closeMenu()
 }
 
 function selectRequest(requestId: string) {
@@ -135,51 +148,22 @@ function duplicateRequest(requestId: string) {
   collectionStore.duplicateRequest(props.collection.id, requestId)
 }
 
-function deleteRequest(requestId: string) {
+async function deleteRequest(requestId: string) {
   const request = props.collection.requests.find(r => r.id === requestId)
-  if (request && confirm(`Delete request "${request.name}"?`)) {
-    collectionStore.deleteRequest(props.collection.id, requestId)
+  if (request) {
+    const confirmed = await confirm(confirmActions.delete(request.name))
+    if (confirmed) {
+      collectionStore.deleteRequest(props.collection.id, requestId)
+    }
   }
 }
 
-// Handle request added to root (dropped from folder)
 // Handle request added to root (dropped from folder)
 function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequest } }) {
-  // The @add event wraps the data in an 'added' property
   const added = evt.added
   if (!added?.element?.id) return
-  
-  // Request was dropped here from a folder - update its folderId to undefined (root level)
   collectionStore.moveRequestToFolder(props.collection.id, added.element.id, undefined)
 }
-
-// Refs for dropdown menu (teleported to body)
-const collectionDropdownRef = ref<HTMLElement | null>(null)
-
-// Close menu when clicking outside the dropdown
-function onClickOutside(e: MouseEvent) {
-  const target = e.target as Node
-  if (collectionDropdownRef.value && !collectionDropdownRef.value.contains(target)) {
-    showMenu.value = false
-  }
-}
-
-// Add/remove click listener when menu opens/closes
-// Use capture: true to catch events before @click.stop can prevent them
-watch(showMenu, (isOpen) => {
-  if (isOpen) {
-    nextTick(() => {
-      document.addEventListener('click', onClickOutside, true)
-    })
-  } else {
-    document.removeEventListener('click', onClickOutside, true)
-  }
-})
-
-// Cleanup on unmount
-onUnmounted(() => {
-  document.removeEventListener('click', onClickOutside, true)
-})
 </script>
 
 <template>
@@ -232,53 +216,31 @@ onUnmounted(() => {
       <div class="relative" ref="menuRef">
         <button
           class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
-          @click.stop="showMenu = !showMenu"
+          @click.stop="toggleMenu"
         >
           <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
         </button>
 
-        <!-- Dropdown menu -->
-        <Teleport to="body">
-          <div
-            v-if="showMenu"
-            ref="collectionDropdownRef"
-            class="fixed z-[200] min-w-[160px] py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded shadow-xl"
-            :style="{
-              top: menuRef ? `${menuRef.getBoundingClientRect().bottom + 4}px` : '0',
-              left: menuRef ? `${menuRef.getBoundingClientRect().left - 120}px` : '0'
-            }"
-          >
-            <button
-              class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-              @click="addRequest"
-            >
-              <FilePlus class="w-4 h-4" />
-              New Request
-            </button>
-            <button
-              class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-              @click="addFolder"
-            >
-              <FolderPlus class="w-4 h-4" />
-              New Folder
-            </button>
-            <div class="my-1 border-t border-[var(--color-border)]" />
-            <button
-              class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-              @click="startRename"
-            >
-              <Pencil class="w-4 h-4" />
-              Rename
-            </button>
-            <button
-              class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-              @click="deleteCollection"
-            >
-              <Trash2 class="w-4 h-4" />
-              Delete
-            </button>
-          </div>
-        </Teleport>
+        <DropdownMenu
+          v-model="showMenu"
+          :trigger-ref="menuRef"
+          align="right"
+          :align-offset="120"
+        >
+          <DropdownMenuItem :icon="FilePlus" @click="addRequest">
+            New Request
+          </DropdownMenuItem>
+          <DropdownMenuItem :icon="FolderPlus" @click="addFolder">
+            New Folder
+          </DropdownMenuItem>
+          <DropdownDivider />
+          <DropdownMenuItem :icon="Pencil" @click="startRename">
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem :icon="Trash2" danger @click="deleteCollection">
+            Delete
+          </DropdownMenuItem>
+        </DropdownMenu>
       </div>
     </div>
 

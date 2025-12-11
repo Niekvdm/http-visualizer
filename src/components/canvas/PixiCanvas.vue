@@ -50,6 +50,58 @@ const activeSourceId = computed(() => {
   return undefined
 })
 
+// Get the resolved auth config for the active request
+// This handles both auth store configs (imported files) and HttpAuth from collections
+function getResolvedAuthConfig(request: ReturnType<typeof activeRequest.value>): import('@/types').AuthConfig | null {
+  if (!request) return null
+  
+  // First check auth store (handles imported files and any overrides)
+  const storeConfig = authStore.getAuthConfig(request.id, activeSourceId.value)
+  if (storeConfig && storeConfig.type !== 'none') {
+    return storeConfig
+  }
+  
+  // For collections, the auth is resolved in request.auth (HttpAuth type)
+  // Convert HttpAuth to AuthConfig format for display
+  if (request.auth && request.auth.type !== 'none') {
+    const httpAuth = request.auth
+    const authConfig: import('@/types').AuthConfig = { type: 'none' }
+    
+    switch (httpAuth.type) {
+      case 'basic':
+        authConfig.type = 'basic'
+        authConfig.basic = httpAuth.basic
+        break
+      case 'bearer':
+        authConfig.type = 'bearer'
+        authConfig.bearer = httpAuth.bearer
+        break
+      case 'api-key':
+        authConfig.type = 'api-key'
+        authConfig.apiKey = httpAuth.apiKey
+        break
+      case 'oauth2':
+        // Map legacy oauth2 to oauth2-client-credentials
+        authConfig.type = 'oauth2-client-credentials'
+        if (httpAuth.oauth2) {
+          authConfig.oauth2ClientCredentials = {
+            tokenUrl: httpAuth.oauth2.accessTokenUrl,
+            clientId: httpAuth.oauth2.clientId,
+            clientSecret: httpAuth.oauth2.clientSecret,
+            scope: httpAuth.oauth2.scope,
+          }
+        }
+        break
+    }
+    
+    if (authConfig.type !== 'none') {
+      return authConfig
+    }
+  }
+  
+  return null
+}
+
 function hexToNumber(hex: string): number {
   return parseInt(hex.replace('#', ''), 16)
 }
@@ -93,7 +145,7 @@ async function initPixi() {
 
   // Set initial request if any
   if (activeRequest.value) {
-    const authConfig = authStore.getAuthConfig(activeRequest.value.id, activeSourceId.value)
+    const authConfig = getResolvedAuthConfig(activeRequest.value)
     dataFlowGraph.setRequest(activeRequest.value, authConfig, getResolvedVariables())
   }
 }
@@ -133,7 +185,7 @@ function handleResize() {
 
 // Watch for selected request changes (from either imported files or collections)
 watch(activeRequest, (request) => {
-  const authConfig = request ? authStore.getAuthConfig(request.id, activeSourceId.value) : null
+  const authConfig = getResolvedAuthConfig(request)
   dataFlowGraph?.setRequest(request, authConfig, getResolvedVariables())
 })
 
