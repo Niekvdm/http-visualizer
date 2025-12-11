@@ -101,8 +101,8 @@ export const usePresentationStore = defineStore('presentation', () => {
     const labels: Record<string, string> = {
       dialog: 'Dialog View',
       terminal: 'Terminal Mode',
-      story: 'Story Mode',
-      space: 'Space Mission',
+      sequence: 'Sequence Diagram',
+      network: 'Network Topology',
     }
     return labels[mode.value] || mode.value
   })

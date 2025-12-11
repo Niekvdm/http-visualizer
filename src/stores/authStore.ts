@@ -233,6 +233,7 @@ export const useAuthStore = defineStore('auth', () => {
       'oauth2-client-credentials': 'OAuth2 (Client Credentials)',
       'oauth2-password': 'OAuth2 (Password)',
       'oauth2-authorization-code': 'OAuth2 (Authorization Code)',
+      'oauth2-implicit': 'OAuth2 (Implicit - Legacy)',
       'manual-headers': 'Manual Headers',
     }
     return labels[type] || type
@@ -277,6 +278,14 @@ export const useAuthStore = defineStore('auth', () => {
           redirectUri: window.location.origin + '/oauth/callback',
           scope: '',
           usePkce: true,
+        }
+        break
+      case 'oauth2-implicit':
+        config.oauth2Implicit = {
+          authorizationUrl: '',
+          clientId: '',
+          redirectUri: window.location.origin + '/oauth/callback',
+          scope: '',
         }
         break
       case 'manual-headers':

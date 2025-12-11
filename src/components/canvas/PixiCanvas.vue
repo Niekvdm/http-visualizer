@@ -52,7 +52,7 @@ const activeSourceId = computed(() => {
 
 // Get the resolved auth config for the active request
 // This handles both auth store configs (imported files) and HttpAuth from collections
-function getResolvedAuthConfig(request: ReturnType<typeof activeRequest.value>): import('@/types').AuthConfig | null {
+function getResolvedAuthConfig(request: typeof activeRequest.value): import('@/types').AuthConfig | null {
   if (!request) return null
   
   // First check auth store (handles imported files and any overrides)

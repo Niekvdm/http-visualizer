@@ -337,6 +337,7 @@ function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequ
     >
       <AuthTab
         :auth="localAuth"
+        :request-id="`folder${folder.id}`"
         @update:auth="onAuthUpdate"
       />
 

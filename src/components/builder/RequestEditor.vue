@@ -396,6 +396,7 @@ function getMethodClass(m: HttpMethod): string {
         v-model:auth="auth"
         :folder-id="folderId"
         :collection-id="collectionId"
+        :request-id="requestId"
       />
       <VariablesTab
         v-else-if="activeTab === 'variables'"

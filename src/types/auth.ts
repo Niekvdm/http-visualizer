@@ -15,6 +15,7 @@ export type AuthType =
   | 'oauth2-client-credentials'
   | 'oauth2-password'
   | 'oauth2-authorization-code'
+  | 'oauth2-implicit'
   | 'manual-headers'
 
 // Basic Authentication
@@ -66,6 +67,16 @@ export interface OAuth2AuthorizationCodeConfig {
   state?: string
 }
 
+// OAuth2 Implicit Grant (Legacy - for SPAs without backend)
+// Note: This flow is deprecated in OAuth 2.1 but still widely used
+export interface OAuth2ImplicitConfig {
+  authorizationUrl: string
+  clientId: string
+  redirectUri: string
+  scope?: string
+  state?: string
+}
+
 // Manual Headers
 export interface ManualHeadersConfig {
   headers: HttpHeader[]
@@ -83,6 +94,7 @@ export interface AuthConfig {
   oauth2ClientCredentials?: OAuth2ClientCredentialsConfig
   oauth2Password?: OAuth2PasswordConfig
   oauth2AuthorizationCode?: OAuth2AuthorizationCodeConfig
+  oauth2Implicit?: OAuth2ImplicitConfig
   manualHeaders?: ManualHeadersConfig
 }
 
@@ -118,11 +130,17 @@ export interface HttpAuth {
     in: 'header' | 'query'
   }
   oauth2?: {
-    grantType: string
-    accessTokenUrl: string
+    grantType: 'client_credentials' | 'password' | 'authorization_code' | 'implicit'
+    accessTokenUrl: string           // Token URL (not needed for implicit)
+    authorizationUrl?: string        // Auth URL (auth code + implicit only)
     clientId: string
-    clientSecret: string
+    clientSecret?: string            // Optional for auth code, not used for implicit
+    redirectUri?: string             // Auth code + implicit only
     scope?: string
+    usePkce?: boolean                // Auth code only
+    // Password grant fields
+    username?: string
+    password?: string
   }
 }
 
@@ -135,6 +153,7 @@ export const AUTH_TYPE_LABELS: Record<AuthType, string> = {
   'oauth2-client-credentials': 'OAuth2 (Client Credentials)',
   'oauth2-password': 'OAuth2 (Password)',
   'oauth2-authorization-code': 'OAuth2 (Authorization Code)',
+  'oauth2-implicit': 'OAuth2 (Implicit - Legacy)',
   'manual-headers': 'Manual Headers',
 }
 

@@ -2,12 +2,18 @@
 import { ref, computed, watch } from 'vue'
 import type { HttpAuth } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
-import { Lock, Eye, EyeOff, FolderOpen } from 'lucide-vue-next'
+import { useAuthService } from '@/composables/useAuthService'
+import { useAuthStore } from '@/stores/authStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
+import { resolveVariables } from '@/utils/variableResolver'
+import { Lock, Eye, EyeOff, FolderOpen, AlertTriangle, Check } from 'lucide-vue-next'
+import VariableInput from './VariableInput.vue'
 
 const props = defineProps<{
   auth?: HttpAuth
   folderId?: string
   collectionId?: string
+  requestId?: string
 }>()
 
 const emit = defineEmits<{
@@ -15,8 +21,23 @@ const emit = defineEmits<{
 }>()
 
 const collectionStore = useCollectionStore()
+const authService = useAuthService()
+const authStore = useAuthStore()
+const environmentStore = useEnvironmentStore()
 
 type AuthType = HttpAuth['type'] | 'inherit'
+
+// Get resolved variables from environment and collection
+const resolvedVariables = computed(() => {
+  const collectionVars = props.collectionId 
+    ? collectionStore.collections.find(c => c.id === props.collectionId)?.variables || {}
+    : {}
+  return {
+    ...collectionVars,
+    ...environmentStore.activeVariables,
+  }
+})
+type OAuth2GrantType = NonNullable<HttpAuth['oauth2']>['grantType']
 
 // Check if folder has auth configured
 const folderAuth = computed(() => {
@@ -64,6 +85,41 @@ const useInherit = ref(false)
 const showPassword = ref(false)
 const showToken = ref(false)
 const showSecret = ref(false)
+
+// OAuth2 authorization state
+const isAuthorizing = ref(false)
+const authError = ref<string | null>(null)
+
+// OAuth2 grant type helpers
+const isAuthCodeGrant = computed(() => 
+  localAuth.value.type === 'oauth2' && localAuth.value.oauth2?.grantType === 'authorization_code'
+)
+const isImplicitGrant = computed(() => 
+  localAuth.value.type === 'oauth2' && localAuth.value.oauth2?.grantType === 'implicit'
+)
+const isPasswordGrant = computed(() => 
+  localAuth.value.type === 'oauth2' && localAuth.value.oauth2?.grantType === 'password'
+)
+const needsAuthorizationUrl = computed(() => isAuthCodeGrant.value || isImplicitGrant.value)
+const needsTokenUrl = computed(() => !isImplicitGrant.value)
+const needsClientSecret = computed(() => !isImplicitGrant.value)
+const needsRedirectUri = computed(() => isAuthCodeGrant.value || isImplicitGrant.value)
+const needsPkce = computed(() => isAuthCodeGrant.value)
+const needsUserCredentials = computed(() => isPasswordGrant.value)
+
+// Cached token (use requestId if available)
+const tokenKey = computed(() => props.requestId || 'legacy-auth')
+const cachedToken = computed(() => authStore.getCachedToken(tokenKey.value))
+const hasToken = computed(() => !!cachedToken.value)
+const tokenExpiry = computed(() => {
+  if (!cachedToken.value?.expiresAt) return null
+  const remaining = cachedToken.value.expiresAt - Date.now()
+  if (remaining <= 0) return 'Expired'
+  const seconds = Math.floor(remaining / 1000)
+  if (seconds < 60) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return `${minutes}m ${seconds % 60}s`
+})
 
 // Initialize from props
 watch(
@@ -167,10 +223,121 @@ function updateApiKey(field: 'key' | 'value' | 'in', value: string) {
   }
 }
 
-function updateOAuth2(field: keyof NonNullable<HttpAuth['oauth2']>, value: string) {
+function updateOAuth2(field: keyof NonNullable<HttpAuth['oauth2']>, value: string | boolean) {
   if (localAuth.value.oauth2) {
-    (localAuth.value.oauth2 as Record<string, string>)[field] = value
+    (localAuth.value.oauth2 as Record<string, string | boolean>)[field] = value
     emitUpdate()
+  }
+}
+
+// Helper to resolve environment variables in a string
+function resolve(value: string | undefined): string {
+  if (!value) return ''
+  return resolveVariables(value, resolvedVariables.value, false)
+}
+
+// Convert legacy HttpAuth OAuth2 to modern AuthConfig and store in authStore
+// This ensures the token is applied when executing requests
+function syncOAuth2ConfigToAuthStore() {
+  if (!props.requestId || !localAuth.value.oauth2) return
+  
+  const oauth2 = localAuth.value.oauth2
+  const grantType = oauth2.grantType
+  
+  if (grantType === 'authorization_code') {
+    authStore.setAuthConfig(props.requestId, {
+      type: 'oauth2-authorization-code',
+      oauth2AuthorizationCode: {
+        authorizationUrl: resolve(oauth2.authorizationUrl),
+        tokenUrl: resolve(oauth2.accessTokenUrl),
+        clientId: resolve(oauth2.clientId),
+        clientSecret: resolve(oauth2.clientSecret),
+        redirectUri: resolve(oauth2.redirectUri),
+        scope: resolve(oauth2.scope),
+        usePkce: oauth2.usePkce ?? true,
+      }
+    })
+  } else if (grantType === 'implicit') {
+    authStore.setAuthConfig(props.requestId, {
+      type: 'oauth2-implicit',
+      oauth2Implicit: {
+        authorizationUrl: resolve(oauth2.authorizationUrl),
+        clientId: resolve(oauth2.clientId),
+        redirectUri: resolve(oauth2.redirectUri),
+        scope: resolve(oauth2.scope),
+      }
+    })
+  } else if (grantType === 'client_credentials') {
+    authStore.setAuthConfig(props.requestId, {
+      type: 'oauth2-client-credentials',
+      oauth2ClientCredentials: {
+        tokenUrl: resolve(oauth2.accessTokenUrl),
+        clientId: resolve(oauth2.clientId),
+        clientSecret: resolve(oauth2.clientSecret) || '',
+        scope: resolve(oauth2.scope),
+      }
+    })
+  } else if (grantType === 'password') {
+    authStore.setAuthConfig(props.requestId, {
+      type: 'oauth2-password',
+      oauth2Password: {
+        tokenUrl: resolve(oauth2.accessTokenUrl),
+        clientId: resolve(oauth2.clientId),
+        clientSecret: resolve(oauth2.clientSecret),
+        username: resolve(oauth2.username),
+        password: resolve(oauth2.password),
+        scope: resolve(oauth2.scope),
+      }
+    })
+  }
+}
+
+// OAuth2 Authorization flow
+async function initiateAuth() {
+  if (!props.requestId) {
+    authError.value = 'Request ID is required for OAuth2 authorization'
+    return
+  }
+  
+  isAuthorizing.value = true
+  authError.value = null
+  
+  try {
+    const oauth2 = localAuth.value.oauth2
+    if (!oauth2) return
+    
+    // Sync config to authStore so token gets applied when executing requests
+    syncOAuth2ConfigToAuthStore()
+    
+    // Resolve environment variables in all OAuth2 fields
+    if (isAuthCodeGrant.value) {
+      await authService.initiateAuthCodeFlow(props.requestId, {
+        authorizationUrl: resolve(oauth2.authorizationUrl),
+        tokenUrl: resolve(oauth2.accessTokenUrl),
+        clientId: resolve(oauth2.clientId),
+        clientSecret: resolve(oauth2.clientSecret),
+        redirectUri: resolve(oauth2.redirectUri),
+        scope: resolve(oauth2.scope),
+        usePkce: oauth2.usePkce ?? true,
+      })
+    } else if (isImplicitGrant.value) {
+      await authService.initiateImplicitFlow(props.requestId, {
+        authorizationUrl: resolve(oauth2.authorizationUrl),
+        clientId: resolve(oauth2.clientId),
+        redirectUri: resolve(oauth2.redirectUri),
+        scope: resolve(oauth2.scope),
+      })
+    }
+  } catch (error) {
+    authError.value = error instanceof Error ? error.message : 'Authorization failed'
+  } finally {
+    isAuthorizing.value = false
+  }
+}
+
+function clearToken() {
+  if (props.requestId) {
+    authService.clearTokens(props.requestId)
   }
 }
 
@@ -387,6 +554,16 @@ const basicPreview = computed(() => {
 
     <!-- OAuth2 -->
     <div v-else-if="localAuth.type === 'oauth2' && localAuth.oauth2" class="space-y-3">
+      <!-- Deprecation warning for Implicit flow -->
+      <div v-if="isImplicitGrant" class="flex gap-2 p-3 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 rounded text-xs">
+        <AlertTriangle class="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+        <div>
+          <span class="font-bold text-[var(--color-warning)]">Legacy Flow:</span>
+          <span class="text-[var(--color-text-dim)]"> Implicit flow is deprecated in OAuth 2.1. Use Authorization Code + PKCE for new applications.</span>
+        </div>
+      </div>
+
+      <!-- Grant Type -->
       <div>
         <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
           Grant Type
@@ -398,69 +575,167 @@ const basicPreview = computed(() => {
         >
           <option value="client_credentials">Client Credentials</option>
           <option value="password">Password Grant</option>
+          <option value="authorization_code">Authorization Code + PKCE</option>
+          <option value="implicit">Implicit (Legacy)</option>
         </select>
       </div>
-      <div>
+
+      <!-- Token URL (not needed for implicit) -->
+      <div v-if="needsTokenUrl">
         <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
-          Access Token URL
+          Token URL
         </label>
-        <input
-          :value="localAuth.oauth2.accessTokenUrl"
-          type="text"
-          class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-xs text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
+        <VariableInput
+          :model-value="localAuth.oauth2.accessTokenUrl"
+          :collection-id="collectionId"
           placeholder="https://auth.example.com/oauth/token"
-          @input="updateOAuth2('accessTokenUrl', ($event.target as HTMLInputElement).value)"
+          @update:model-value="updateOAuth2('accessTokenUrl', $event)"
         />
       </div>
+
+      <!-- Authorization URL (auth code and implicit only) -->
+      <div v-if="needsAuthorizationUrl">
+        <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
+          Authorization URL
+        </label>
+        <VariableInput
+          :model-value="localAuth.oauth2.authorizationUrl || ''"
+          :collection-id="collectionId"
+          placeholder="https://auth.example.com/oauth/authorize"
+          @update:model-value="updateOAuth2('authorizationUrl', $event)"
+        />
+      </div>
+
+      <!-- Client ID and Secret -->
       <div class="grid grid-cols-2 gap-3">
         <div>
           <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
             Client ID
           </label>
-          <input
-            :value="localAuth.oauth2.clientId"
-            type="text"
-            class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-xs text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
+          <VariableInput
+            :model-value="localAuth.oauth2.clientId"
+            :collection-id="collectionId"
             placeholder="Client ID"
-            @input="updateOAuth2('clientId', ($event.target as HTMLInputElement).value)"
+            @update:model-value="updateOAuth2('clientId', $event)"
+          />
+        </div>
+        <div v-if="needsClientSecret">
+          <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
+            Client Secret
+            <span v-if="isAuthCodeGrant" class="text-[var(--color-text-dim)]">(optional)</span>
+          </label>
+          <VariableInput
+            :model-value="localAuth.oauth2.clientSecret || ''"
+            :collection-id="collectionId"
+            placeholder="Client Secret"
+            type="password"
+            @update:model-value="updateOAuth2('clientSecret', $event)"
+          />
+        </div>
+      </div>
+
+      <!-- Redirect URI (auth code and implicit only) -->
+      <div v-if="needsRedirectUri">
+        <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
+          Redirect URI
+        </label>
+        <VariableInput
+          :model-value="localAuth.oauth2.redirectUri || ''"
+          :collection-id="collectionId"
+          placeholder="http://localhost:5173/oauth/callback"
+          @update:model-value="updateOAuth2('redirectUri', $event)"
+        />
+      </div>
+
+      <!-- Username/Password (password grant only) -->
+      <template v-if="needsUserCredentials">
+        <div>
+          <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
+            Username
+          </label>
+          <VariableInput
+            :model-value="localAuth.oauth2.username || ''"
+            :collection-id="collectionId"
+            placeholder="Enter username"
+            @update:model-value="updateOAuth2('username', $event)"
           />
         </div>
         <div>
           <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
-            Client Secret
+            Password
           </label>
-          <div class="relative">
-            <input
-              :value="localAuth.oauth2.clientSecret"
-              :type="showSecret ? 'text' : 'password'"
-              class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 pr-10 text-xs text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
-              placeholder="Client Secret"
-              @input="updateOAuth2('clientSecret', ($event.target as HTMLInputElement).value)"
-            />
-            <button
-              type="button"
-              class="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--color-text-dim)] hover:text-[var(--color-text)]"
-              @click="showSecret = !showSecret"
-            >
-              <Eye v-if="!showSecret" class="w-4 h-4" />
-              <EyeOff v-else class="w-4 h-4" />
-            </button>
-          </div>
+          <VariableInput
+            :model-value="localAuth.oauth2.password || ''"
+            :collection-id="collectionId"
+            placeholder="Enter password"
+            type="password"
+            @update:model-value="updateOAuth2('password', $event)"
+          />
         </div>
-      </div>
+      </template>
+
+      <!-- Scope -->
       <div>
         <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
           Scope (optional)
         </label>
-        <input
-          :value="localAuth.oauth2.scope || ''"
-          type="text"
-          class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-xs text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
-          placeholder="e.g., read write"
-          @input="updateOAuth2('scope', ($event.target as HTMLInputElement).value)"
+        <VariableInput
+          :model-value="localAuth.oauth2.scope || ''"
+          :collection-id="collectionId"
+          placeholder="e.g., openid profile email"
+          @update:model-value="updateOAuth2('scope', $event)"
         />
       </div>
-      <div class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
+
+      <!-- PKCE checkbox (auth code only) -->
+      <div v-if="needsPkce" class="flex items-center gap-2">
+        <input
+          :checked="localAuth.oauth2.usePkce ?? true"
+          type="checkbox"
+          class="accent-[var(--color-primary)]"
+          @change="updateOAuth2('usePkce', ($event.target as HTMLInputElement).checked)"
+        />
+        <label class="text-xs text-[var(--color-text)]">
+          Use PKCE (Proof Key for Code Exchange)
+        </label>
+      </div>
+
+      <!-- Authorize button (auth code and implicit only) -->
+      <div v-if="needsAuthorizationUrl" class="pt-2">
+        <button
+          class="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded transition-colors bg-[var(--color-primary)] text-[var(--color-bg)] hover:brightness-110 disabled:opacity-50 disabled:cursor-not-allowed"
+          :disabled="isAuthorizing"
+          @click="initiateAuth"
+        >
+          {{ isAuthorizing ? 'AUTHORIZING...' : 'AUTHORIZE' }}
+        </button>
+        <p v-if="authError" class="mt-2 text-xs text-[var(--color-error)]">
+          {{ authError }}
+        </p>
+      </div>
+
+      <!-- Token status -->
+      <div v-if="hasToken" class="text-[10px] bg-[var(--color-bg-tertiary)] p-3 rounded">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-[var(--color-primary)] font-bold flex items-center gap-1">
+            <Check class="w-3 h-3" /> Token Cached
+          </span>
+          <button 
+            class="text-[var(--color-error)] hover:underline text-[10px]"
+            @click="clearToken"
+          >
+            Clear
+          </button>
+        </div>
+        <div class="text-[var(--color-text-dim)]">
+          <div>Type: {{ cachedToken?.tokenType }}</div>
+          <div v-if="tokenExpiry">Expires: {{ tokenExpiry }}</div>
+          <div class="truncate">Token: {{ cachedToken?.accessToken.slice(0, 30) }}...</div>
+        </div>
+      </div>
+
+      <!-- Note for non-interactive flows -->
+      <div v-if="!needsAuthorizationUrl" class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
         <span class="font-bold">Note:</span>
         <span class="ml-1">Token will be fetched automatically before request execution.</span>
       </div>

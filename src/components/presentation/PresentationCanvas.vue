@@ -6,8 +6,7 @@ import { useRequestStore } from '@/stores/requestStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
-import { TerminalMode } from './modes/TerminalMode'
-import type { TerminalEvent } from './modes/TerminalMode'
+import { createPresentationMode, type IPresentationMode, type PresentationModeEvent } from './modes'
 import JsonReveal from './JsonReveal.vue'
 import TerminalJsonReveal from './TerminalJsonReveal.vue'
 import { X } from 'lucide-vue-next'
@@ -20,7 +19,7 @@ const themeStore = useThemeStore()
 const envStore = useEnvironmentStore()
 
 let app: Application | null = null
-let currentRenderer: TerminalMode | null = null
+let currentRenderer: IPresentationMode | null = null
 
 const colors = computed(() => themeStore.colors)
 const mode = computed(() => presentationStore.mode)
@@ -43,7 +42,7 @@ const activeRequest = computed(() => {
   return null
 })
 
-// Local state for JSON reveal (controlled by terminal events)
+// Local state for JSON reveal (controlled by mode events)
 const showJsonReveal = ref(false)
 
 function hexToNumber(hex: string): number {
@@ -96,21 +95,23 @@ function createRenderer() {
     errorColor: hexToNumber(colors.value.error),
   }
 
-  switch (mode.value) {
-    case 'terminal':
-      currentRenderer = new TerminalMode(options)
-      // Set up event callback for terminal
-      currentRenderer.setEventCallback(handleTerminalEvent)
-      // Pass settings to terminal
-      currentRenderer.updateSettings({
-        autoAdvance: settings.value.autoAdvance,
-        autoAdvanceDelay: settings.value.autoAdvanceDelay,
-        typingSpeed: settings.value.typingSpeed,
-      })
-      break
-    default:
-      return
+  // Use the mode registry to create the appropriate renderer
+  currentRenderer = createPresentationMode(mode.value, options)
+  
+  if (!currentRenderer) {
+    // Mode is 'dialog' or unknown - nothing to render here
+    return
   }
+
+  // Set up event callback
+  currentRenderer.setEventCallback(handleModeEvent)
+  
+  // Pass settings
+  currentRenderer.updateSettings({
+    autoAdvance: settings.value.autoAdvance,
+    autoAdvanceDelay: settings.value.autoAdvanceDelay,
+    typingSpeed: settings.value.typingSpeed,
+  })
 
   app.stage.addChild(currentRenderer)
   
@@ -142,8 +143,8 @@ function getResolvedVariables(): Record<string, string> {
   }
 }
 
-// Handle events from terminal
-function handleTerminalEvent(event: TerminalEvent) {
+// Handle events from presentation modes
+function handleModeEvent(event: PresentationModeEvent) {
   if (event === 'execute-request') {
     // Dispatch custom event to trigger request execution
     if (activeRequest.value) {
@@ -162,10 +163,8 @@ function handleTerminalEvent(event: TerminalEvent) {
 // Close JSON reveal
 function closeJsonReveal() {
   showJsonReveal.value = false
-  // Notify terminal that JSON reveal was closed so it can show execute prompt
-  if (currentRenderer && mode.value === 'terminal') {
-    currentRenderer.onJsonRevealClosed()
-  }
+  // Notify mode that JSON reveal was closed
+  currentRenderer?.onJsonRevealClosed()
 }
 
 function handleResize() {
@@ -245,13 +244,11 @@ watch(colors, (newColors) => {
 
 // Watch for settings changes
 watch(settings, (newSettings) => {
-  if (currentRenderer && mode.value === 'terminal') {
-    currentRenderer.updateSettings({
-      autoAdvance: newSettings.autoAdvance,
-      autoAdvanceDelay: newSettings.autoAdvanceDelay,
-      typingSpeed: newSettings.typingSpeed,
-    })
-  }
+  currentRenderer?.updateSettings({
+    autoAdvance: newSettings.autoAdvance,
+    autoAdvanceDelay: newSettings.autoAdvanceDelay,
+    typingSpeed: newSettings.typingSpeed,
+  })
 }, { deep: true })
 
 // Handle keyboard events for presentation mode
@@ -267,24 +264,21 @@ function handleKeydown(e: KeyboardEvent) {
     return
   }
   
-  if (mode.value === 'terminal' && currentRenderer) {
-    if (e.key === 'Enter') {
-      currentRenderer.handleInput()
-    }
+  // Let the current mode handle input
+  if (currentRenderer && e.key === 'Enter') {
+    currentRenderer.handleInput()
   }
 }
 
-// Handle click events on canvas (excluding execute-request)
+// Handle click events on canvas
 function handleCanvasClick() {
   // Block clicks when response view is open
   if (showJsonReveal.value) {
     return
   }
   
-  if (mode.value === 'terminal' && currentRenderer) {
-    // Don't allow click to execute request - only Enter key can do that
-    currentRenderer.handleInputClick()
-  }
+  // Let the current mode handle click
+  currentRenderer?.handleInputClick()
 }
 
 onMounted(async () => {
@@ -379,4 +373,3 @@ onUnmounted(() => {
   100% { opacity: 1; }
 }
 </style>
-

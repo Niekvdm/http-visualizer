@@ -7,6 +7,7 @@ import type {
   OAuth2ClientCredentialsConfig,
   OAuth2PasswordConfig,
   OAuth2AuthorizationCodeConfig,
+  OAuth2ImplicitConfig,
 } from '@/types'
 
 // PKCE helpers
@@ -83,6 +84,7 @@ export function useAuthService() {
       case 'oauth2-client-credentials':
       case 'oauth2-password':
       case 'oauth2-authorization-code':
+      case 'oauth2-implicit':
         const token = await getOrRefreshToken(tokenKey, config)
         if (token) {
           headers.push({
@@ -157,6 +159,11 @@ export function useAuthService() {
         case 'oauth2-authorization-code':
           // Auth code flow requires user interaction, return cached token or null
           // The actual flow is initiated separately via initiateAuthCodeFlow
+          return token || null
+
+        case 'oauth2-implicit':
+          // Implicit flow requires user interaction, return cached token or null
+          // The actual flow is initiated separately via initiateImplicitFlow
           return token || null
       }
 
@@ -236,7 +243,7 @@ export function useAuthService() {
   }
 
   // Initiate OAuth2 Authorization Code flow (opens popup)
-  async function initiateAuthCodeFlow(tokenKey: string, config: OAuth2AuthorizationCodeConfig): Promise<void> {
+  async function initiateAuthCodeFlow(tokenKey: string, config: OAuth2AuthorizationCodeConfig): Promise<CachedToken> {
     const state = generateRandomString(32)
     let authUrl = `${config.authorizationUrl}?response_type=code&client_id=${encodeURIComponent(config.clientId)}&redirect_uri=${encodeURIComponent(config.redirectUri)}&state=${state}`
 
@@ -244,92 +251,117 @@ export function useAuthService() {
       authUrl += `&scope=${encodeURIComponent(config.scope)}`
     }
 
+    let verifier = ''
     if (config.usePkce) {
-      const verifier = generateRandomString(64)
+      verifier = generateRandomString(64)
       const challenge = await generateCodeChallenge(verifier)
       authUrl += `&code_challenge=${challenge}&code_challenge_method=S256`
-      pkceState.set(tokenKey, { verifier, state })
-    } else {
-      pkceState.set(tokenKey, { verifier: '', state })
     }
 
+    // Store PKCE state and config for callback handling
+    pkceState.set(tokenKey, { verifier, state })
+    sessionStorage.setItem(`oauth2-pending-${state}`, JSON.stringify({ tokenKey, config }))
+    sessionStorage.setItem(`oauth2-pkce-${state}`, JSON.stringify({ verifier, state }))
+
     // Open popup for authorization
+    const popup = openAuthPopup(authUrl)
+    if (!popup) {
+      throw new Error('Failed to open authorization popup. Please allow popups for this site.')
+    }
+
+    // Wait for callback via postMessage
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handleMessage)
+        reject(new Error('Authorization timed out. Please try again.'))
+      }, 5 * 60 * 1000) // 5 minute timeout
+
+      function handleMessage(event: MessageEvent) {
+        // Verify origin
+        if (event.origin !== window.location.origin) return
+        
+        const data = event.data
+        if (data?.type !== 'oauth2-callback' || data?.state !== state) return
+
+        // Clean up
+        clearTimeout(timeout)
+        window.removeEventListener('message', handleMessage)
+        pkceState.delete(tokenKey)
+
+        if (data.success && data.token) {
+          authStore.setCachedToken(tokenKey, data.token)
+          resolve(data.token)
+        } else {
+          reject(new Error(data.errorDescription || data.error || 'Authorization failed'))
+        }
+      }
+
+      window.addEventListener('message', handleMessage)
+    })
+  }
+
+  // Initiate OAuth2 Implicit flow (opens popup)
+  async function initiateImplicitFlow(tokenKey: string, config: OAuth2ImplicitConfig): Promise<CachedToken> {
+    const state = generateRandomString(32)
+    let authUrl = `${config.authorizationUrl}?response_type=token&client_id=${encodeURIComponent(config.clientId)}&redirect_uri=${encodeURIComponent(config.redirectUri)}&state=${state}`
+
+    if (config.scope) {
+      authUrl += `&scope=${encodeURIComponent(config.scope)}`
+    }
+
+    // Store config for callback handling
+    sessionStorage.setItem(`oauth2-pending-${state}`, JSON.stringify({ tokenKey, config }))
+
+    // Open popup for authorization
+    const popup = openAuthPopup(authUrl)
+    if (!popup) {
+      throw new Error('Failed to open authorization popup. Please allow popups for this site.')
+    }
+
+    // Wait for callback via postMessage
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        window.removeEventListener('message', handleMessage)
+        reject(new Error('Authorization timed out. Please try again.'))
+      }, 5 * 60 * 1000) // 5 minute timeout
+
+      function handleMessage(event: MessageEvent) {
+        // Verify origin
+        if (event.origin !== window.location.origin) return
+        
+        const data = event.data
+        if (data?.type !== 'oauth2-callback' || data?.state !== state) return
+
+        // Clean up
+        clearTimeout(timeout)
+        window.removeEventListener('message', handleMessage)
+
+        if (data.success && data.token) {
+          authStore.setCachedToken(tokenKey, data.token)
+          resolve(data.token)
+        } else {
+          reject(new Error(data.errorDescription || data.error || 'Authorization failed'))
+        }
+      }
+
+      window.addEventListener('message', handleMessage)
+    })
+  }
+
+  // Helper to open auth popup
+  function openAuthPopup(url: string): Window | null {
     const width = 600
     const height = 700
     const left = window.screenX + (window.outerWidth - width) / 2
     const top = window.screenY + (window.outerHeight - height) / 2
 
-    const popup = window.open(
-      authUrl,
+    return window.open(
+      url,
       'oauth2-auth',
       `width=${width},height=${height},left=${left},top=${top},scrollbars=yes`
     )
-
-    if (!popup) {
-      throw new Error('Failed to open authorization popup. Please allow popups for this site.')
-    }
-
-    // Store config for callback handling
-    sessionStorage.setItem(`oauth2-pending-${state}`, JSON.stringify({ tokenKey, config }))
   }
 
-  // Handle OAuth2 Authorization Code callback
-  async function handleAuthCodeCallback(code: string, state: string): Promise<CachedToken> {
-    const pendingData = sessionStorage.getItem(`oauth2-pending-${state}`)
-    if (!pendingData) {
-      throw new Error('No pending authorization found for this state')
-    }
-
-    const { tokenKey, config } = JSON.parse(pendingData) as { 
-      tokenKey: string
-      config: OAuth2AuthorizationCodeConfig 
-    }
-
-    const pkce = pkceState.get(tokenKey)
-    if (!pkce || pkce.state !== state) {
-      throw new Error('Invalid state parameter')
-    }
-
-    const body = new URLSearchParams({
-      grant_type: 'authorization_code',
-      client_id: config.clientId,
-      code,
-      redirect_uri: config.redirectUri,
-    })
-
-    if (config.clientSecret) {
-      body.append('client_secret', config.clientSecret)
-    }
-
-    if (config.usePkce && pkce.verifier) {
-      body.append('code_verifier', pkce.verifier)
-    }
-
-    const response = await fetch(config.tokenUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: body.toString(),
-    })
-
-    if (!response.ok) {
-      const error = await response.text()
-      throw new Error(`Token exchange failed: ${response.status} - ${error}`)
-    }
-
-    const data = await response.json()
-    const token = parseTokenResponse(data)
-
-    // Cache the token
-    authStore.setCachedToken(tokenKey, token)
-
-    // Cleanup
-    pkceState.delete(tokenKey)
-    sessionStorage.removeItem(`oauth2-pending-${state}`)
-
-    return token
-  }
 
   // Refresh an OAuth2 token
   async function refreshToken(tokenKey: string, config: AuthConfig, refreshTokenValue: string): Promise<CachedToken | null> {
@@ -457,6 +489,14 @@ export function useAuthService() {
           }
           return { success: true, message: 'Configuration valid. Click "Authorize" to get token.' }
 
+        case 'oauth2-implicit':
+          if (!config.oauth2Implicit?.authorizationUrl ||
+              !config.oauth2Implicit?.clientId ||
+              !config.oauth2Implicit?.redirectUri) {
+            return { success: false, message: 'Authorization URL, Client ID, and Redirect URI are required' }
+          }
+          return { success: true, message: 'Configuration valid. Click "Authorize" to get token. Note: Implicit flow is deprecated.' }
+
         case 'manual-headers':
           return { success: true, message: `${config.manualHeaders?.headers.length || 0} header(s) configured` }
 
@@ -486,7 +526,7 @@ export function useAuthService() {
     getApiKeyQueryParams,
     getOrRefreshToken,
     initiateAuthCodeFlow,
-    handleAuthCodeCallback,
+    initiateImplicitFlow,
     testAuthConfig,
     clearTokens,
     clearAllTokens,

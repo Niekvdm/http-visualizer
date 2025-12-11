@@ -1,19 +1,17 @@
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 
 const props = defineProps<{
   modelValue: string
-  collectionId: string
+  collectionId?: string
   placeholder?: string
-  invalid?: boolean
+  type?: 'text' | 'password'
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
-  blur: []
-  keydown: [event: KeyboardEvent]
 }>()
 
 const environmentStore = useEnvironmentStore()
@@ -24,6 +22,7 @@ const inputRef = ref<HTMLInputElement | null>(null)
 
 // Get collection variables
 const collectionVariables = computed(() => {
+  if (!props.collectionId) return {}
   const collection = collectionStore.collections.find(c => c.id === props.collectionId)
   return collection?.variables || {}
 })
@@ -44,12 +43,14 @@ function resolveVariable(name: string): { value: string; source: 'environment' |
   return null
 }
 
-// Parse URL into segments (text and variables)
-const urlSegments = computed(() => {
-  const segments: Array<
+// Parse value into segments (text and variables)
+const segments = computed(() => {
+  const result: Array<
     | { type: 'text'; value: string }
     | { type: 'variable'; name: string; resolved: ReturnType<typeof resolveVariable> }
   > = []
+  
+  if (!props.modelValue) return result
   
   const regex = /(\{\{[^}]+\}\})/g
   const parts = props.modelValue.split(regex)
@@ -60,27 +61,26 @@ const urlSegments = computed(() => {
     const varMatch = part.match(/^\{\{([^}]+)\}\}$/)
     if (varMatch) {
       const name = varMatch[1].trim()
-      segments.push({
+      result.push({
         type: 'variable',
         name,
         resolved: resolveVariable(name)
       })
     } else {
-      segments.push({ type: 'text', value: part })
+      result.push({ type: 'text', value: part })
     }
   }
   
-  return segments
+  return result
 })
 
-// Check if URL has any variables
+// Check if value has any variables
 const hasVariables = computed(() => {
-  return urlSegments.value.some(s => s.type === 'variable')
+  return segments.value.some(s => s.type === 'variable')
 })
 
 function startEditing() {
   isEditing.value = true
-  // Focus input after Vue updates DOM
   setTimeout(() => {
     inputRef.value?.focus()
     inputRef.value?.select()
@@ -89,7 +89,6 @@ function startEditing() {
 
 function stopEditing() {
   isEditing.value = false
-  emit('blur')
 }
 
 function onInput(event: Event) {
@@ -98,36 +97,38 @@ function onInput(event: Event) {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  emit('keydown', event)
   if (event.key === 'Enter') {
     stopEditing()
   }
 }
+
+// Mask password values
+function maskValue(value: string): string {
+  if (props.type === 'password') {
+    return '•'.repeat(Math.min(value.length, 20))
+  }
+  return value
+}
 </script>
 
 <template>
-  <div class="variable-url-input relative w-full">
+  <div class="variable-input relative w-full">
     <!-- Display mode with badges -->
     <div
       v-if="!isEditing && hasVariables"
-      class="url-display flex items-center gap-0 px-3 py-2 text-sm bg-[var(--color-bg)] border rounded cursor-text font-mono overflow-visible whitespace-nowrap"
-      :class="[
-        invalid 
-          ? 'border-[var(--color-warning)]' 
-          : 'border-[var(--color-border)] hover:border-[var(--color-text-dim)]'
-      ]"
+      class="flex items-center gap-0 px-3 py-2 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded cursor-text font-mono overflow-hidden whitespace-nowrap hover:border-[var(--color-text-dim)]"
       @click="startEditing"
     >
-      <template v-for="(segment, index) in urlSegments" :key="index">
+      <template v-for="(segment, index) in segments" :key="index">
         <!-- Text segment -->
-        <span v-if="segment.type === 'text'" class="text-[var(--color-text)]">
-          {{ segment.value }}
+        <span v-if="segment.type === 'text'" class="text-[var(--color-text)] truncate">
+          {{ maskValue(segment.value) }}
         </span>
         
         <!-- Variable badge -->
         <span
           v-else
-          class="variable-badge group inline-flex items-center px-1.5 py-0.5 mx-0.5 rounded text-xs font-medium transition-all duration-150"
+          class="variable-badge group inline-flex items-center px-1 py-0.5 mx-0.5 rounded text-[10px] font-medium transition-all duration-150 shrink-0"
           :class="[
             segment.resolved
               ? 'bg-[var(--color-primary)]/20 text-[var(--color-primary)] border border-[var(--color-primary)]/30 hover:bg-[var(--color-primary)]/30'
@@ -136,7 +137,7 @@ function onKeydown(event: KeyboardEvent) {
         >
           <!-- Resolved value (shown by default) -->
           <span class="group-hover:hidden">
-            {{ segment.resolved ? segment.resolved.value : '⚠ undefined' }}
+            {{ segment.resolved ? maskValue(segment.resolved.value) : '⚠ undefined' }}
           </span>
           <!-- Variable name (shown on hover) -->
           <span class="hidden group-hover:inline">{{ segment.name }}</span>
@@ -145,7 +146,7 @@ function onKeydown(event: KeyboardEvent) {
       
       <!-- Placeholder if empty -->
       <span v-if="!modelValue" class="text-[var(--color-text-dim)]">
-        {{ placeholder || 'Enter URL...' }}
+        {{ placeholder }}
       </span>
     </div>
 
@@ -154,14 +155,9 @@ function onKeydown(event: KeyboardEvent) {
       v-else
       ref="inputRef"
       :value="modelValue"
-      type="text"
-      :placeholder="placeholder || 'https://api.example.com/endpoint'"
-      class="w-full px-3 py-2 text-sm bg-[var(--color-bg)] border rounded text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] font-mono placeholder:text-[var(--color-text-dim)]"
-      :class="[
-        invalid 
-          ? 'border-[var(--color-warning)]' 
-          : 'border-[var(--color-border)]'
-      ]"
+      :type="type || 'text'"
+      :placeholder="placeholder"
+      class="w-full px-3 py-2 text-xs bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] font-mono placeholder:text-[var(--color-text-dim)]"
       @input="onInput"
       @blur="stopEditing"
       @keydown="onKeydown"

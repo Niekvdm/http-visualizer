@@ -4,21 +4,24 @@ import type {
   OAuth2ClientCredentialsConfig, 
   OAuth2PasswordConfig, 
   OAuth2AuthorizationCodeConfig,
+  OAuth2ImplicitConfig,
   AuthType 
 } from '@/types'
 import { useAuthService } from '@/composables/useAuthService'
 import { useAuthStore } from '@/stores/authStore'
 import NeonButton from '@/components/ui/NeonButton.vue'
-import { Check } from 'lucide-vue-next'
+import { Check, AlertTriangle } from 'lucide-vue-next'
+
+type OAuth2Config = OAuth2ClientCredentialsConfig | OAuth2PasswordConfig | OAuth2AuthorizationCodeConfig | OAuth2ImplicitConfig
 
 const props = defineProps<{
-  type: 'oauth2-client-credentials' | 'oauth2-password' | 'oauth2-authorization-code'
-  config: OAuth2ClientCredentialsConfig | OAuth2PasswordConfig | OAuth2AuthorizationCodeConfig
+  type: 'oauth2-client-credentials' | 'oauth2-password' | 'oauth2-authorization-code' | 'oauth2-implicit'
+  config: OAuth2Config
   requestId: string
 }>()
 
 const emit = defineEmits<{
-  'update:config': [config: OAuth2ClientCredentialsConfig | OAuth2PasswordConfig | OAuth2AuthorizationCodeConfig]
+  'update:config': [config: OAuth2Config]
 }>()
 
 const authService = useAuthService()
@@ -31,11 +34,13 @@ const authError = ref<string | null>(null)
 const isClientCredentials = computed(() => props.type === 'oauth2-client-credentials')
 const isPassword = computed(() => props.type === 'oauth2-password')
 const isAuthCode = computed(() => props.type === 'oauth2-authorization-code')
+const isImplicit = computed(() => props.type === 'oauth2-implicit')
 
 // Config casts
 const ccConfig = computed(() => props.config as OAuth2ClientCredentialsConfig)
 const pwConfig = computed(() => props.config as OAuth2PasswordConfig)
 const acConfig = computed(() => props.config as OAuth2AuthorizationCodeConfig)
+const implicitConfig = computed(() => props.config as OAuth2ImplicitConfig)
 
 // Cached token
 const cachedToken = computed(() => authStore.getCachedToken(props.requestId))
@@ -55,13 +60,15 @@ function updateField(field: string, value: string | boolean) {
 }
 
 async function initiateAuth() {
-  if (!isAuthCode.value) return
-  
   isAuthorizing.value = true
   authError.value = null
   
   try {
-    await authService.initiateAuthCodeFlow(props.requestId, acConfig.value)
+    if (isAuthCode.value) {
+      await authService.initiateAuthCodeFlow(props.requestId, acConfig.value)
+    } else if (isImplicit.value) {
+      await authService.initiateImplicitFlow(props.requestId, implicitConfig.value)
+    }
   } catch (error) {
     authError.value = error instanceof Error ? error.message : 'Authorization failed'
   } finally {
@@ -76,8 +83,17 @@ function clearToken() {
 
 <template>
   <div class="space-y-4">
-    <!-- Token URL (all types) -->
-    <div>
+    <!-- Deprecation warning for Implicit flow -->
+    <div v-if="isImplicit" class="flex items-start gap-2 p-3 bg-[var(--color-warning)]/10 border border-[var(--color-warning)]/30 rounded text-xs">
+      <AlertTriangle class="w-4 h-4 text-[var(--color-warning)] flex-shrink-0 mt-0.5" />
+      <div>
+        <span class="font-bold text-[var(--color-warning)]">Legacy Flow:</span>
+        <span class="text-[var(--color-text-dim)]"> Implicit flow is deprecated in OAuth 2.1. Use Authorization Code + PKCE for new applications.</span>
+      </div>
+    </div>
+
+    <!-- Token URL (client credentials, password, auth code - NOT implicit) -->
+    <div v-if="!isImplicit">
       <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
         Token URL
       </label>
@@ -90,13 +106,13 @@ function clearToken() {
       />
     </div>
 
-    <!-- Authorization URL (auth code only) -->
-    <div v-if="isAuthCode">
+    <!-- Authorization URL (auth code and implicit) -->
+    <div v-if="isAuthCode || isImplicit">
       <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
         Authorization URL
       </label>
       <input
-        :value="acConfig.authorizationUrl"
+        :value="isAuthCode ? acConfig.authorizationUrl : implicitConfig.authorizationUrl"
         type="text"
         class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-sm text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
         placeholder="https://auth.example.com/oauth/authorize"
@@ -118,8 +134,8 @@ function clearToken() {
       />
     </div>
 
-    <!-- Client Secret (client credentials required, others optional) -->
-    <div>
+    <!-- Client Secret (client credentials required, password/auth code optional, NOT for implicit) -->
+    <div v-if="!isImplicit">
       <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
         Client Secret
         <span v-if="!isClientCredentials" class="text-[var(--color-text-dim)]">(optional)</span>
@@ -162,13 +178,13 @@ function clearToken() {
       </div>
     </template>
 
-    <!-- Redirect URI (auth code only) -->
-    <div v-if="isAuthCode">
+    <!-- Redirect URI (auth code and implicit) -->
+    <div v-if="isAuthCode || isImplicit">
       <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
         Redirect URI
       </label>
       <input
-        :value="acConfig.redirectUri"
+        :value="isAuthCode ? acConfig.redirectUri : implicitConfig.redirectUri"
         type="text"
         class="w-full bg-[var(--color-bg)] border border-[var(--color-border)] rounded px-3 py-2 text-sm text-[var(--color-text)] font-mono focus:border-[var(--color-primary)] focus:outline-none"
         placeholder="http://localhost:5173/oauth/callback"
@@ -217,8 +233,8 @@ function clearToken() {
       </label>
     </div>
 
-    <!-- Authorize button (auth code only) -->
-    <div v-if="isAuthCode" class="pt-2">
+    <!-- Authorize button (auth code and implicit) -->
+    <div v-if="isAuthCode || isImplicit" class="pt-2">
       <NeonButton 
         size="sm" 
         :loading="isAuthorizing"

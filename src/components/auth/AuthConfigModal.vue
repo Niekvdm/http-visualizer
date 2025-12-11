@@ -35,7 +35,8 @@ const authTypes: { value: AuthType; label: string }[] = [
   { value: 'api-key', label: 'API Key' },
   { value: 'oauth2-client-credentials', label: 'OAuth2 (Client Credentials)' },
   { value: 'oauth2-password', label: 'OAuth2 (Password Grant)' },
-  { value: 'oauth2-authorization-code', label: 'OAuth2 (Authorization Code)' },
+  { value: 'oauth2-authorization-code', label: 'OAuth2 (Authorization Code + PKCE)' },
+  { value: 'oauth2-implicit', label: 'OAuth2 (Implicit - Legacy)' },
   { value: 'manual-headers', label: 'Manual Headers' },
 ]
 
@@ -334,6 +335,15 @@ const modalSubtitle = computed(() => {
               :config="localConfig.oauth2AuthorizationCode"
               :request-id="requestId"
               @update:config="localConfig.oauth2AuthorizationCode = $event as typeof localConfig.oauth2AuthorizationCode"
+            />
+
+            <!-- OAuth2 Implicit (Legacy) -->
+            <OAuth2Form 
+              v-else-if="localConfig.type === 'oauth2-implicit' && localConfig.oauth2Implicit"
+              type="oauth2-implicit"
+              :config="localConfig.oauth2Implicit"
+              :request-id="requestId"
+              @update:config="localConfig.oauth2Implicit = $event as typeof localConfig.oauth2Implicit"
             />
 
             <!-- Manual Headers -->
