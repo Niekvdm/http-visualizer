@@ -1,0 +1,87 @@
+### Variables
+@baseUrl = https://jsonplaceholder.typicode.com
+
+### Get all posts
+# @name GetAllPosts
+GET {{baseUrl}}/posts
+Accept: application/json
+
+### Get single post
+# @name GetSinglePost
+GET {{baseUrl}}/posts/1
+Accept: application/json
+
+### Get post comments
+# @name GetPostComments
+GET {{baseUrl}}/posts/1/comments
+Accept: application/json
+
+### Create a new post
+# @name CreatePost
+POST {{baseUrl}}/posts
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Hello from HTTP Visualizer",
+  "body": "This is a test post created from the Matrix",
+  "userId": 1
+}
+
+### Update a post
+# @name UpdatePost
+PUT {{baseUrl}}/posts/1
+Content-Type: application/json
+Accept: application/json
+
+{
+  "id": 1,
+  "title": "Updated Title",
+  "body": "This post has been updated",
+  "userId": 1
+}
+
+### Partial update a post
+# @name PatchPost
+PATCH {{baseUrl}}/posts/1
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Patched Title Only"
+}
+
+### Delete a post
+# @name DeletePost
+DELETE {{baseUrl}}/posts/1
+
+### Get all users
+# @name GetAllUsers
+GET {{baseUrl}}/users
+Accept: application/json
+
+### Get user by ID
+# @name GetUserById
+GET {{baseUrl}}/users/1
+Accept: application/json
+
+### Get todos
+# @name GetTodos
+GET {{baseUrl}}/todos?_limit=10
+Accept: application/json
+
+### Get albums
+# @name GetAlbums
+GET {{baseUrl}}/albums
+Accept: application/json
+
+### Nested resource - User's posts
+# @name GetUserPosts
+GET {{baseUrl}}/users/1/posts
+Accept: application/json
+
+### Nested resource - User's todos
+# @name GetUserTodos
+GET {{baseUrl}}/users/1/todos
+Accept: application/json
+

@@ -1,0 +1,101 @@
+### Variables
+@apiUrl = https://dummyjson.com
+
+### Get all products
+# @name GetProducts
+GET {{apiUrl}}/products?limit=5
+Accept: application/json
+
+### Get single product
+# @name GetProduct
+GET {{apiUrl}}/products/1
+Accept: application/json
+
+### Search products
+# @name SearchProducts
+GET {{apiUrl}}/products/search?q=phone
+Accept: application/json
+
+### Add new product
+# @name AddProduct
+POST {{apiUrl}}/products/add
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Matrix Phone",
+  "description": "A phone from the Matrix",
+  "price": 999,
+  "brand": "Neo Corp"
+}
+
+### Update product
+# @name UpdateProduct
+PUT {{apiUrl}}/products/1
+Content-Type: application/json
+Accept: application/json
+
+{
+  "title": "Updated Matrix Phone"
+}
+
+### Delete product
+# @name DeleteProduct
+DELETE {{apiUrl}}/products/1
+
+### Get all users
+# @name GetUsers
+GET {{apiUrl}}/users?limit=5
+Accept: application/json
+
+### Get single user
+# @name GetUser
+GET {{apiUrl}}/users/1
+Accept: application/json
+
+### Login (Auth test)
+# @name Login
+POST {{apiUrl}}/auth/login
+Content-Type: application/json
+Accept: application/json
+
+{
+  "username": "emilys",
+  "password": "emilyspass"
+}
+
+### Get auth user (with token)
+# @name GetAuthUser
+GET {{apiUrl}}/auth/me
+Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MSwidXNlcm5hbWUiOiJlbWlseXMiLCJlbWFpbCI6ImVtaWx5LmpvaG5zb25AeC5kdW1teWpzb24uY29tIiwiZmlyc3ROYW1lIjoiRW1pbHkiLCJsYXN0TmFtZSI6IkpvaG5zb24iLCJnZW5kZXIiOiJmZW1hbGUiLCJpbWFnZSI6Imh0dHBzOi8vZHVtbXlqc29uLmNvbS9pY29uL2VtaWx5cy8xMjgiLCJpYXQiOjE3MTg5NTgwMTgsImV4cCI6MTcxODk2MTYxOH0.placeholder
+Accept: application/json
+
+### Get todos
+# @name GetTodos
+GET {{apiUrl}}/todos?limit=5
+Accept: application/json
+
+### Get quotes
+# @name GetQuotes
+GET {{apiUrl}}/quotes?limit=5
+Accept: application/json
+
+### Get posts
+# @name GetPosts
+GET {{apiUrl}}/posts?limit=5
+Accept: application/json
+
+### Get comments
+# @name GetComments
+GET {{apiUrl}}/comments?limit=5
+Accept: application/json
+
+### Get carts
+# @name GetCarts
+GET {{apiUrl}}/carts?limit=3
+Accept: application/json
+
+### Get recipes
+# @name GetRecipes
+GET {{apiUrl}}/recipes?limit=3
+Accept: application/json

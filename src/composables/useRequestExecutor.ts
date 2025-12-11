@@ -1,0 +1,365 @@
+import { ref } from 'vue'
+import { useRequestStore } from '@/stores/requestStore'
+import { useAuthStore } from '@/stores/authStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useAuthService } from '@/composables/useAuthService'
+import { useExtensionBridge, type ExtensionResponse } from '@/composables/useExtensionBridge'
+import { resolveVariables, mergeVariables } from '@/utils/variableResolver'
+import type { ParsedRequest, ExecutionResponse, ExecutionError, HttpAuth, HttpHeader, SentRequest } from '@/types'
+
+export function useRequestExecutor() {
+  const requestStore = useRequestStore()
+  const authStore = useAuthStore()
+  const envStore = useEnvironmentStore()
+  const authService = useAuthService()
+  const { isExtensionAvailable, executeViaExtension } = useExtensionBridge()
+  const isExecuting = ref(false)
+  const funnyTextInterval = ref<ReturnType<typeof setInterval> | null>(null)
+
+  async function executeRequest(request: ParsedRequest, fileId?: string): Promise<void> {
+    if (isExecuting.value) return
+
+    isExecuting.value = true
+    
+    // Get resolved variables for this request
+    // Priority: file overrides > active environment > file-level variables > request variables
+    const variables = getResolvedVariables(request, fileId)
+    
+    // Check if auth is configured (from auth store - request or file level, or from file)
+    const hasConfiguredAuth = authStore.hasAuthConfig(request.id, fileId)
+    const hasFileAuth = request.auth?.type !== 'none' && request.auth?.type !== undefined
+    const hasAuth = hasConfiguredAuth || hasFileAuth
+
+    try {
+      // Start funny text rotation
+      startFunnyTextRotation()
+
+      // Phase 1: Authentication (if needed)
+      if (hasAuth) {
+        requestStore.setExecutionPhase('authenticating')
+        
+        // If using auth store config, try to get/refresh tokens
+        if (hasConfiguredAuth) {
+          const config = authStore.getAuthConfig(request.id, fileId)
+          if (config && ['oauth2-client-credentials', 'oauth2-password', 'oauth2-authorization-code'].includes(config.type)) {
+            try {
+              // Determine the token cache key based on where the config comes from
+              const authSource = authStore.getAuthConfigSource(request.id, fileId)
+              const tokenKey = authSource === 'file' && fileId ? `file:${fileId}` : request.id
+              
+              await authService.getOrRefreshToken(tokenKey, config)
+            } catch (error) {
+              // Token fetch failed, but we'll continue and let the request fail
+              console.error('Auth token fetch failed:', error)
+            }
+          }
+        }
+        
+        // Small delay for visual effect
+        await simulateDelay(500 + Math.random() * 300)
+      }
+
+      // Phase 2: Fetching
+      requestStore.setExecutionPhase('fetching')
+      
+      const startTime = performance.now()
+
+      // Build fetch options with auth and resolved variables
+      const fetchOptions = await buildFetchOptions(request, fileId, variables)
+
+      // Resolve URL with variables
+      let url = resolveVariables(request.url, variables)
+      
+      // Add API key query params if configured
+      if (hasConfiguredAuth) {
+        const queryParams = authService.getApiKeyQueryParams(request.id, fileId)
+        if (Object.keys(queryParams).length > 0) {
+          const urlObj = new URL(url)
+          for (const [key, value] of Object.entries(queryParams)) {
+            urlObj.searchParams.set(key, value)
+          }
+          url = urlObj.toString()
+        }
+      }
+
+      let executionResponse: ExecutionResponse
+
+      // Convert headers to object for storage and extension
+      const headersObj = headersToObject(fetchOptions.headers as Headers)
+      
+      // Store the sent request details for visualization
+      const sentRequest: SentRequest = {
+        method: request.method,
+        url,
+        headers: headersObj,
+        body: fetchOptions.body as string | undefined,
+        viaExtension: isExtensionAvailable.value,
+      }
+      requestStore.executionState.sentRequest = sentRequest
+
+      // Try to use extension for CORS bypass, fall back to direct fetch
+      if (isExtensionAvailable.value) {
+        // Execute via extension (bypasses CORS)
+        const extResponse = await executeViaExtension({
+          method: request.method,
+          url,
+          headers: headersObj,
+          body: fetchOptions.body as string | undefined,
+        })
+
+        const endTime = performance.now()
+        const duration = endTime - startTime
+
+        if (!extResponse.success || !extResponse.data) {
+          throw new Error(extResponse.error?.message || 'Extension request failed')
+        }
+
+        const { data } = extResponse
+        let bodyParsed: unknown = null
+        
+        try {
+          bodyParsed = JSON.parse(data.body)
+        } catch {
+          // Not JSON, that's fine
+        }
+
+        executionResponse = {
+          status: data.status,
+          statusText: data.statusText,
+          headers: data.headers,
+          body: data.body,
+          bodyParsed,
+          size: data.size,
+          timing: {
+            total: duration,
+          },
+        }
+      } else {
+        // Direct fetch (may hit CORS)
+        const response = await fetch(url, fetchOptions)
+        
+        const endTime = performance.now()
+        const duration = endTime - startTime
+
+        // Read response body
+        const bodyText = await response.text()
+        let bodyParsed: unknown = null
+        
+        try {
+          bodyParsed = JSON.parse(bodyText)
+        } catch {
+          // Not JSON, that's fine
+        }
+
+        executionResponse = {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: bodyText,
+          bodyParsed,
+          size: new Blob([bodyText]).size,
+          timing: {
+            total: duration,
+          },
+        }
+      }
+
+      // Update store with response
+      requestStore.executionState.response = executionResponse
+
+      // Phase 3: Success or Error based on status
+      if (executionResponse.status >= 200 && executionResponse.status < 300) {
+        requestStore.setExecutionPhase('success')
+      } else {
+        requestStore.executionState.error = {
+          message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,
+          code: String(executionResponse.status),
+          phase: 'fetching',
+        }
+        requestStore.setExecutionPhase('error')
+      }
+
+      // Add to history
+      requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+
+    } catch (error) {
+      // Handle network errors
+      let errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
+      let errorCode = 'NETWORK_ERROR'
+      
+      // Detect CORS errors and provide helpful message
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        if (!isExtensionAvailable.value) {
+          errorMessage = 'CORS error: Install the HTTP Visualizer extension to bypass CORS restrictions'
+          errorCode = 'CORS_ERROR'
+        }
+      }
+      
+      const executionError: ExecutionError = {
+        message: errorMessage,
+        code: errorCode,
+        phase: requestStore.executionState.phase,
+      }
+      
+      requestStore.executionState.error = executionError
+      requestStore.setExecutionPhase('error')
+      requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+    } finally {
+      stopFunnyTextRotation()
+      isExecuting.value = false
+    }
+  }
+
+  /**
+   * Get resolved variables for a request with proper priority chain:
+   * 1. File overrides (highest priority)
+   * 2. Active environment variables
+   * 3. File-level parsed variables
+   * 4. Request-level parsed variables (lowest priority)
+   */
+  function getResolvedVariables(request: ParsedRequest, fileId?: string): Record<string, string> {
+    // Get the file for its parsed variables
+    const file = fileId ? requestStore.files.find(f => f.id === fileId) : null
+    
+    return mergeVariables(
+      // Lowest priority: request-level variables
+      request.variables,
+      // File-level parsed variables
+      file?.variables,
+      // Active environment variables
+      envStore.activeVariables,
+      // Highest priority: file overrides
+      fileId ? envStore.getFileOverrides(fileId) : undefined
+    )
+  }
+
+  async function buildFetchOptions(
+    request: ParsedRequest, 
+    fileId?: string,
+    variables?: Record<string, string>
+  ): Promise<RequestInit> {
+    const headers = new Headers()
+    const vars = variables || getResolvedVariables(request, fileId)
+
+    // Add request headers from the file with variable resolution
+    for (const header of request.headers) {
+      if (header.enabled) {
+        const resolvedKey = resolveVariables(header.key, vars)
+        const resolvedValue = resolveVariables(header.value, vars)
+        headers.set(resolvedKey, resolvedValue)
+      }
+    }
+
+    // Check if we have auth configured in the auth store (request or file level)
+    if (authStore.hasAuthConfig(request.id, fileId)) {
+      // Get auth headers from auth service
+      const authHeaders = await authService.getAuthHeaders(request, fileId)
+      for (const header of authHeaders) {
+        if (header.enabled) {
+          // Auth headers may also contain variables
+          const resolvedKey = resolveVariables(header.key, vars)
+          const resolvedValue = resolveVariables(header.value, vars)
+          headers.set(resolvedKey, resolvedValue)
+        }
+      }
+    } else {
+      // Fall back to file-based auth with variable resolution
+      addLegacyAuthHeaders(headers, request.auth, vars)
+    }
+
+    const options: RequestInit = {
+      method: request.method,
+      headers,
+      mode: 'cors',
+    }
+
+    // Add body for methods that support it, with variable resolution
+    if (['POST', 'PUT', 'PATCH'].includes(request.method) && request.body) {
+      options.body = resolveVariables(request.body, vars)
+    }
+
+    return options
+  }
+
+  // Legacy auth header handling for file-based auth configs
+  function addLegacyAuthHeaders(headers: Headers, auth?: HttpAuth, variables?: Record<string, string>) {
+    if (!auth || auth.type === 'none') return
+    const vars = variables || {}
+
+    switch (auth.type) {
+      case 'bearer':
+        if (auth.bearer?.token) {
+          const resolvedToken = resolveVariables(auth.bearer.token, vars)
+          headers.set('Authorization', `Bearer ${resolvedToken}`)
+        }
+        break
+
+      case 'basic':
+        if (auth.basic?.username) {
+          const resolvedUsername = resolveVariables(auth.basic.username, vars)
+          const resolvedPassword = resolveVariables(auth.basic.password || '', vars)
+          const credentials = btoa(`${resolvedUsername}:${resolvedPassword}`)
+          headers.set('Authorization', `Basic ${credentials}`)
+        }
+        break
+
+      case 'api-key':
+        if (auth.apiKey?.key && auth.apiKey?.value) {
+          if (auth.apiKey.in === 'header') {
+            const resolvedKey = resolveVariables(auth.apiKey.key, vars)
+            const resolvedValue = resolveVariables(auth.apiKey.value, vars)
+            headers.set(resolvedKey, resolvedValue)
+          }
+          // Query params would be handled in URL building
+        }
+        break
+
+      case 'oauth2':
+        // Legacy OAuth2 from file - would need token URL call
+        // For now, just log a warning
+        console.warn('Legacy OAuth2 auth from file not fully supported. Use auth configuration UI instead.')
+        break
+    }
+  }
+
+  function startFunnyTextRotation() {
+    funnyTextInterval.value = setInterval(() => {
+      requestStore.updateFunnyText()
+    }, 2000)
+  }
+
+  function stopFunnyTextRotation() {
+    if (funnyTextInterval.value) {
+      clearInterval(funnyTextInterval.value)
+      funnyTextInterval.value = null
+    }
+  }
+
+  function simulateDelay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms))
+  }
+
+  function reset() {
+    stopFunnyTextRotation()
+    requestStore.reset()
+    isExecuting.value = false
+  }
+
+  /**
+   * Convert Headers object to plain object
+   */
+  function headersToObject(headers: Headers): Record<string, string> {
+    const obj: Record<string, string> = {}
+    headers.forEach((value, key) => {
+      obj[key] = value
+    })
+    return obj
+  }
+
+  return {
+    isExecuting,
+    isExtensionAvailable,
+    executeRequest,
+    reset,
+  }
+}
