@@ -90,7 +90,7 @@ export interface ExportedSession {
 }
 
 // Presentation Mode types
-export type PresentationMode = 'dialog' | 'terminal' | 'sequence' | 'network'
+export type PresentationMode = 'dialog' | 'terminal' | 'sequence' | 'network' | 'waterfall' | 'packet' | 'curl' | 'har' | 'matrix' | 'blueprint'
 export type PresentationPhase = 'idle' | 'intro' | 'auth' | 'sending' | 'receiving' | 'success' | 'error' | 'json-reveal'
 
 export interface PresentationSettings {
