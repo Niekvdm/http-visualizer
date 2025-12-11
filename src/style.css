@@ -69,7 +69,7 @@ body {
 
 /* Scanline effect overlay */
 .scanlines::before {
-  content: '';
+  /* content: '';
   position: absolute;
   top: 0;
   left: 0;
@@ -83,7 +83,7 @@ body {
     rgba(0, 255, 65, 0.012) 5px
   );
   pointer-events: none;
-  z-index: 1000;
+  z-index: 1000; */
 }
 
 /* Glow effects */

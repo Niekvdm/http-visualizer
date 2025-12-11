@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import type { CollectionRequest } from '@/types'
+import FormBodyEditor, { type FormField, parseUrlEncoded, serializeToUrlEncoded } from './FormBodyEditor.vue'
 
 type BodyType = CollectionRequest['bodyType']
 
@@ -33,6 +34,27 @@ const localBody = computed({
   set: (value) => emit('update:body', value || undefined)
 })
 
+// Form fields for form/multipart body types
+const formFields = ref<FormField[]>([])
+
+// Check if current body type is a form type
+const isFormType = computed(() => 
+  localBodyType.value === 'form' || localBodyType.value === 'multipart'
+)
+
+// Parse body string to form fields when switching to form type
+watch([() => props.body, () => props.bodyType], ([newBody, newType]) => {
+  if (newType === 'form' || newType === 'multipart') {
+    formFields.value = parseUrlEncoded(newBody || '')
+  }
+}, { immediate: true })
+
+// Update body string when form fields change
+function onFormFieldsUpdate(fields: FormField[]) {
+  formFields.value = fields
+  localBody.value = serializeToUrlEncoded(fields)
+}
+
 // Format JSON on blur
 function formatJson() {
   if (localBodyType.value === 'json' && localBody.value) {
@@ -52,8 +74,6 @@ const placeholder = computed(() => {
       return '{\n  "key": "value"\n}'
     case 'text':
       return 'Plain text content...'
-    case 'form':
-      return 'key1=value1&key2=value2'
     case 'graphql':
       return 'query {\n  users {\n    id\n    name\n  }\n}'
     default:
@@ -72,7 +92,7 @@ const lineCount = computed(() => {
     <!-- Body type selector -->
     <div class="flex items-center gap-2">
       <label class="text-xs text-[var(--color-text-dim)]">Body Type:</label>
-      <div class="flex gap-1">
+      <div class="flex gap-1 flex-wrap">
         <button
           v-for="type in bodyTypes"
           :key="type.value || 'none'"
@@ -89,8 +109,16 @@ const lineCount = computed(() => {
       </div>
     </div>
 
-    <!-- Body content -->
-    <div v-if="localBodyType" class="relative">
+    <!-- Form body editor for form/multipart types -->
+    <FormBodyEditor
+      v-if="isFormType"
+      :fields="formFields"
+      :body-type="localBodyType as 'form' | 'multipart'"
+      @update:fields="onFormFieldsUpdate"
+    />
+
+    <!-- Textarea body content for other types -->
+    <div v-else-if="localBodyType" class="relative">
       <!-- Line numbers -->
       <div 
         class="absolute left-0 top-0 bottom-0 w-8 bg-[var(--color-bg-tertiary)] border-r border-[var(--color-border)] text-right pr-2 pt-2 text-[10px] text-[var(--color-text-dim)] font-mono select-none overflow-hidden"
@@ -119,4 +147,3 @@ const lineCount = computed(() => {
     </div>
   </div>
 </template>
-

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
-import type { CollectionFolder, CollectionRequest } from '@/types'
+import type { CollectionFolder, CollectionRequest, HttpAuth } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useRequestStore } from '@/stores/requestStore'
 import RequestItem from './RequestItem.vue'
+import AuthTab from './AuthTab.vue'
 import draggable from 'vuedraggable'
 import { 
   ChevronRight, 
@@ -13,7 +14,9 @@ import {
   MoreVertical, 
   Pencil, 
   Trash2,
-  GripVertical
+  GripVertical,
+  Lock,
+  X
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -35,9 +38,23 @@ const showMenu = ref(false)
 const isRenaming = ref(false)
 const renameInput = ref('')
 const menuRef = ref<HTMLElement | null>(null)
+const showAuthModal = ref(false)
+const localAuth = ref<HttpAuth | undefined>(undefined)
 
 const isSelected = computed(() => collectionStore.selectedFolderId === props.folder.id)
 const isCollapsed = computed(() => props.folder.collapsed)
+const hasAuth = computed(() => collectionStore.hasFolderAuth(props.collectionId, props.folder.id))
+const authTypeLabel = computed(() => {
+  const auth = props.folder.auth
+  if (!auth || auth.type === 'none') return null
+  const labels: Record<string, string> = {
+    'basic': 'Basic',
+    'bearer': 'Bearer',
+    'api-key': 'API Key',
+    'oauth2': 'OAuth2',
+  }
+  return labels[auth.type] || null
+})
 
 // Local array for draggable - keeps in sync with props.requests
 const localRequests = ref<CollectionRequest[]>([...props.requests])
@@ -100,6 +117,25 @@ function deleteFolder() {
 function addRequest() {
   emit('new-request', props.folder.id)
   showMenu.value = false
+}
+
+function openAuthModal() {
+  localAuth.value = props.folder.auth ? JSON.parse(JSON.stringify(props.folder.auth)) : undefined
+  showAuthModal.value = true
+  showMenu.value = false
+}
+
+function saveAuth() {
+  collectionStore.setFolderAuth(props.collectionId, props.folder.id, localAuth.value)
+  showAuthModal.value = false
+}
+
+function closeAuthModal() {
+  showAuthModal.value = false
+}
+
+function onAuthUpdate(auth: HttpAuth | undefined) {
+  localAuth.value = auth
 }
 
 function selectRequest(requestId: string) {
@@ -217,6 +253,15 @@ onUnmounted(() => {
         </template>
       </div>
 
+      <!-- Auth badge -->
+      <span 
+        v-if="hasAuth"
+        class="px-1 py-0.5 text-[9px] font-medium rounded bg-[var(--color-warning)]/20 text-[var(--color-warning)] shrink-0"
+        :title="`Auth: ${authTypeLabel}`"
+      >
+        <Lock class="w-2.5 h-2.5 inline-block" />
+      </span>
+
       <!-- Request count -->
       <span class="text-[10px] text-[var(--color-text-dim)] shrink-0">
         {{ requests.length }}
@@ -248,6 +293,14 @@ onUnmounted(() => {
             >
               <FilePlus class="w-4 h-4" />
               New Request
+            </button>
+            <button
+              class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
+              @click="openAuthModal"
+            >
+              <Lock class="w-4 h-4" />
+              Configure Auth
+              <span v-if="hasAuth" class="ml-auto text-[10px] text-[var(--color-warning)]">{{ authTypeLabel }}</span>
             </button>
             <div class="my-1 border-t border-[var(--color-border)]" />
             <button
@@ -311,5 +364,54 @@ onUnmounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Auth Modal -->
+    <Teleport to="body">
+      <div
+        v-if="showAuthModal"
+        class="fixed inset-0 z-[300] flex items-center justify-center bg-black/50"
+        @click.self="closeAuthModal"
+      >
+        <div class="w-full max-w-md bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-2xl">
+          <!-- Modal Header -->
+          <div class="flex items-center justify-between px-4 py-3 border-b border-[var(--color-border)]">
+            <div>
+              <h3 class="text-sm font-bold text-[var(--color-text)]">Folder Authentication</h3>
+              <p class="text-[10px] text-[var(--color-text-dim)]">{{ folder.name }} - Requests will inherit this auth</p>
+            </div>
+            <button
+              class="p-1 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-dim)] hover:text-[var(--color-text)]"
+              @click="closeAuthModal"
+            >
+              <X class="w-4 h-4" />
+            </button>
+          </div>
+
+          <!-- Modal Body -->
+          <div class="p-4 max-h-[60vh] overflow-y-auto">
+            <AuthTab
+              :auth="localAuth"
+              @update:auth="onAuthUpdate"
+            />
+          </div>
+
+          <!-- Modal Footer -->
+          <div class="flex justify-end gap-2 px-4 py-3 border-t border-[var(--color-border)]">
+            <button
+              class="px-3 py-1.5 text-xs text-[var(--color-text-dim)] hover:text-[var(--color-text)] rounded"
+              @click="closeAuthModal"
+            >
+              Cancel
+            </button>
+            <button
+              class="px-3 py-1.5 text-xs bg-[var(--color-primary)] text-[var(--color-bg)] rounded font-medium hover:brightness-110"
+              @click="saveAuth"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </Teleport>
   </div>
 </template>

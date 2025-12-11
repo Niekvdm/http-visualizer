@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
-import type { Collection, CollectionFolder, CollectionRequest, HttpMethod, HttpHeader, ParsedRequest } from '@/types'
+import type { Collection, CollectionFolder, CollectionRequest, HttpMethod, HttpHeader, ParsedRequest, HttpAuth } from '@/types'
 import { generateId } from '@/utils/formatters'
 
 const STORAGE_KEY = 'http-visualizer-collections'
@@ -78,7 +78,11 @@ export const useCollectionStore = defineStore('collections', () => {
   })
 
   // Convert CollectionRequest to ParsedRequest for execution
+  // Uses auth inheritance - request auth > folder auth > none
   function toExecutableRequest(request: CollectionRequest, collectionId: string): ParsedRequest {
+    // Get auth with inheritance (request's own auth or inherited from folder)
+    const resolvedAuth = getRequestAuthWithInheritance(collectionId, request.id)
+    
     return {
       id: request.id,
       name: request.name,
@@ -87,7 +91,7 @@ export const useCollectionStore = defineStore('collections', () => {
       headers: request.headers,
       body: request.body,
       bodyType: request.bodyType,
-      auth: request.auth,
+      auth: resolvedAuth,
       variables: request.variables,
       source: 'manual',
       raw: '', // Manual requests don't have raw source
@@ -214,6 +218,58 @@ export const useCollectionStore = defineStore('collections', () => {
     if (folder) {
       folder.collapsed = !folder.collapsed
     }
+  }
+
+  // Set auth for a folder
+  function setFolderAuth(collectionId: string, folderId: string, auth: HttpAuth | undefined) {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return
+
+    const folder = collection.folders.find(f => f.id === folderId)
+    if (folder) {
+      folder.auth = auth
+      folder.updatedAt = Date.now()
+      collection.updatedAt = Date.now()
+    }
+  }
+
+  // Get auth for a folder
+  function getFolderAuth(collectionId: string, folderId: string): HttpAuth | undefined {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return undefined
+
+    const folder = collection.folders.find(f => f.id === folderId)
+    return folder?.auth
+  }
+
+  // Get auth for a request with inheritance (request auth > folder auth > none)
+  function getRequestAuthWithInheritance(collectionId: string, requestId: string): HttpAuth | undefined {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return undefined
+
+    const request = collection.requests.find(r => r.id === requestId)
+    if (!request) return undefined
+
+    // If request has its own auth, use it
+    if (request.auth && request.auth.type !== 'none') {
+      return request.auth
+    }
+
+    // If request is in a folder, check folder auth
+    if (request.folderId) {
+      const folder = collection.folders.find(f => f.id === request.folderId)
+      if (folder?.auth && folder.auth.type !== 'none') {
+        return folder.auth
+      }
+    }
+
+    return undefined
+  }
+
+  // Check if a folder has auth configured
+  function hasFolderAuth(collectionId: string, folderId: string): boolean {
+    const auth = getFolderAuth(collectionId, folderId)
+    return auth !== undefined && auth.type !== 'none'
   }
 
   // Request CRUD
@@ -475,6 +531,10 @@ export const useCollectionStore = defineStore('collections', () => {
     updateFolder,
     deleteFolder,
     toggleFolderCollapse,
+    setFolderAuth,
+    getFolderAuth,
+    hasFolderAuth,
+    getRequestAuthWithInheritance,
 
     // Request CRUD
     createRequest,

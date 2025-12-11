@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
-import type { HttpMethod, HttpHeader, CollectionRequest } from '@/types'
+import type { HttpMethod, HttpHeader, HttpAuth, CollectionRequest } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import HeadersEditor from './HeadersEditor.vue'
 import BodyEditor from './BodyEditor.vue'
-import { X, Save, Play, Copy, Trash2 } from 'lucide-vue-next'
+import AuthTab from './AuthTab.vue'
+import VariablesTab from './VariablesTab.vue'
+import VariableUrlInput from './VariableUrlInput.vue'
+import { X, Save, Play, Copy, Trash2, AlertTriangle } from 'lucide-vue-next'
 
 const props = defineProps<{
   requestId: string
@@ -25,6 +28,9 @@ const request = computed(() => {
   return collection?.requests.find(r => r.id === props.requestId)
 })
 
+// Get folder ID from request
+const folderId = computed(() => request.value?.folderId)
+
 // Local editable state
 const name = ref('')
 const method = ref<HttpMethod>('GET')
@@ -32,9 +38,13 @@ const url = ref('')
 const headers = ref<HttpHeader[]>([])
 const body = ref<string | undefined>(undefined)
 const bodyType = ref<CollectionRequest['bodyType']>(undefined)
+const auth = ref<HttpAuth | undefined>(undefined)
 
 // Active tab
-const activeTab = ref<'headers' | 'body' | 'variables'>('headers')
+const activeTab = ref<'headers' | 'body' | 'auth' | 'variables'>('headers')
+
+// URL validation state
+const urlTouched = ref(false)
 
 // Methods
 const methods: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']
@@ -50,6 +60,8 @@ watch(
       headers.value = [...(request.value.headers || [])]
       body.value = request.value.body
       bodyType.value = request.value.bodyType
+      auth.value = request.value.auth ? JSON.parse(JSON.stringify(request.value.auth)) : undefined
+      urlTouched.value = false
     }
   },
   { immediate: true }
@@ -64,8 +76,90 @@ const hasChanges = computed(() => {
     url.value !== request.value.url ||
     JSON.stringify(headers.value) !== JSON.stringify(request.value.headers || []) ||
     body.value !== request.value.body ||
-    bodyType.value !== request.value.bodyType
+    bodyType.value !== request.value.bodyType ||
+    JSON.stringify(auth.value) !== JSON.stringify(request.value.auth)
   )
+})
+
+// URL validation
+const urlValidation = computed(() => {
+  if (!url.value || !urlTouched.value) return { valid: true, message: '' }
+  
+  // Replace variables with placeholder to validate structure
+  const urlWithoutVars = url.value.replace(/\{\{[^}]+\}\}/g, 'placeholder')
+  
+  // Check if it's a valid URL structure
+  try {
+    // Allow relative URLs starting with /
+    if (urlWithoutVars.startsWith('/')) {
+      return { valid: true, message: '' }
+    }
+    
+    // Check for protocol
+    if (!urlWithoutVars.match(/^https?:\/\//i)) {
+      return { valid: false, message: 'URL should start with http:// or https://' }
+    }
+    
+    new URL(urlWithoutVars)
+    return { valid: true, message: '' }
+  } catch {
+    return { valid: false, message: 'Invalid URL format' }
+  }
+})
+
+// Count variables for badge (simple extraction)
+const variableCount = computed(() => {
+  const varRegex = /\{\{([^}]+)\}\}/g
+  const vars = new Set<string>()
+  
+  // Check URL
+  let match
+  while ((match = varRegex.exec(url.value)) !== null) {
+    vars.add(match[1].trim())
+  }
+  
+  // Check headers
+  for (const header of headers.value) {
+    varRegex.lastIndex = 0
+    while ((match = varRegex.exec(header.key + header.value)) !== null) {
+      vars.add(match[1].trim())
+    }
+  }
+  
+  // Check body
+  if (body.value) {
+    varRegex.lastIndex = 0
+    while ((match = varRegex.exec(body.value)) !== null) {
+      vars.add(match[1].trim())
+    }
+  }
+  
+  return vars.size
+})
+
+// Get auth type label for badge (including inherited)
+const authTypeLabel = computed(() => {
+  const labels: Record<string, string> = {
+    'basic': 'Basic',
+    'bearer': 'Bearer',
+    'api-key': 'API Key',
+    'oauth2': 'OAuth2',
+  }
+  
+  // Check own auth first
+  if (auth.value && auth.value.type !== 'none') {
+    return labels[auth.value.type] || null
+  }
+  
+  // Check inherited from folder
+  if (folderId.value) {
+    const folderAuth = collectionStore.getFolderAuth(props.collectionId, folderId.value)
+    if (folderAuth && folderAuth.type !== 'none') {
+      return `↑ ${labels[folderAuth.type]}`
+    }
+  }
+  
+  return null
 })
 
 function save() {
@@ -78,6 +172,7 @@ function save() {
     headers: headers.value,
     body: body.value,
     bodyType: bodyType.value,
+    auth: auth.value,
   })
 
   emit('saved')
@@ -110,6 +205,10 @@ function close() {
   } else {
     emit('close')
   }
+}
+
+function onUrlBlur() {
+  urlTouched.value = true
 }
 
 function getMethodClass(m: HttpMethod): string {
@@ -170,30 +269,43 @@ function getMethodClass(m: HttpMethod): string {
     </div>
 
     <!-- URL bar -->
-    <div class="flex items-center gap-2 px-4 py-3 border-b border-[var(--color-border)] shrink-0">
-      <select
-        v-model="method"
-        class="px-2 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded outline-none focus:border-[var(--color-primary)] font-mono font-bold"
-        :class="getMethodClass(method)"
-      >
-        <option v-for="m in methods" :key="m" :value="m">
-          {{ m }}
-        </option>
-      </select>
-      <input
-        v-model="url"
-        type="text"
-        placeholder="https://api.example.com/endpoint"
-        class="flex-1 px-3 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded text-[var(--color-text)] outline-none focus:border-[var(--color-primary)] font-mono placeholder:text-[var(--color-text-dim)]"
-        @keydown.enter="run"
-      />
-      <button
-        class="px-4 py-2 text-sm bg-[var(--color-primary)] text-[var(--color-bg)] rounded font-bold hover:brightness-110 flex items-center gap-1.5 shrink-0"
-        @click="run"
-      >
-        <Play class="w-4 h-4" />
-        Run
-      </button>
+    <div class="px-4 py-3 border-b border-[var(--color-border)] shrink-0 space-y-1">
+      <div class="flex items-center gap-2">
+        <select
+          v-model="method"
+          class="px-2 py-2 text-sm bg-[var(--color-bg)] border border-[var(--color-border)] rounded outline-none focus:border-[var(--color-primary)] font-mono font-bold"
+          :class="getMethodClass(method)"
+        >
+          <option v-for="m in methods" :key="m" :value="m">
+            {{ m }}
+          </option>
+        </select>
+        <div class="flex-1 relative">
+          <VariableUrlInput
+            v-model="url"
+            :collection-id="collectionId"
+            placeholder="https://api.example.com/endpoint"
+            :invalid="!urlValidation.valid"
+            @blur="onUrlBlur"
+            @keydown.enter="run"
+          />
+          <AlertTriangle 
+            v-if="!urlValidation.valid"
+            class="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--color-warning)] pointer-events-none"
+            :title="urlValidation.message"
+          />
+        </div>
+        <button
+          class="px-4 py-2 text-sm bg-[var(--color-primary)] text-[var(--color-bg)] rounded font-bold hover:brightness-110 flex items-center gap-1.5 shrink-0"
+          @click="run"
+        >
+          <Play class="w-4 h-4" />
+          Run
+        </button>
+      </div>
+      <div v-if="!urlValidation.valid" class="text-[10px] text-[var(--color-warning)] pl-[88px]">
+        {{ urlValidation.message }}
+      </div>
     </div>
 
     <!-- Tabs -->
@@ -235,6 +347,23 @@ function getMethodClass(m: HttpMethod): string {
       <button
         class="px-4 py-2 text-xs font-mono uppercase tracking-wider transition-colors"
         :class="[
+          activeTab === 'auth'
+            ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
+            : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)]'
+        ]"
+        @click="activeTab = 'auth'"
+      >
+        Auth
+        <span 
+          v-if="authTypeLabel"
+          class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-[var(--color-warning)]/20 text-[var(--color-warning)]"
+        >
+          {{ authTypeLabel }}
+        </span>
+      </button>
+      <button
+        class="px-4 py-2 text-xs font-mono uppercase tracking-wider transition-colors"
+        :class="[
           activeTab === 'variables'
             ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)]'
             : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)]'
@@ -242,6 +371,12 @@ function getMethodClass(m: HttpMethod): string {
         @click="activeTab = 'variables'"
       >
         Variables
+        <span 
+          v-if="variableCount > 0"
+          class="ml-1 px-1.5 py-0.5 text-[10px] rounded-full bg-[var(--color-text-dim)]/20"
+        >
+          {{ variableCount }}
+        </span>
       </button>
     </div>
 
@@ -256,14 +391,19 @@ function getMethodClass(m: HttpMethod): string {
         v-model:body="body"
         v-model:body-type="bodyType"
       />
-      <div v-else-if="activeTab === 'variables'" class="text-xs text-[var(--color-text-dim)]">
-        <p class="mb-4">
-          Use variables in your URL, headers, or body with the syntax: <code class="px-1 py-0.5 bg-[var(--color-bg)] rounded" v-pre>{{variableName}}</code>
-        </p>
-        <p>
-          Variables can be defined at the environment level or collection level.
-        </p>
-      </div>
+      <AuthTab
+        v-else-if="activeTab === 'auth'"
+        v-model:auth="auth"
+        :folder-id="folderId"
+        :collection-id="collectionId"
+      />
+      <VariablesTab
+        v-else-if="activeTab === 'variables'"
+        :url="url"
+        :headers="headers"
+        :body="body"
+        :collection-id="collectionId"
+      />
     </div>
 
     <!-- Footer -->
@@ -291,4 +431,3 @@ function getMethodClass(m: HttpMethod): string {
     </div>
   </div>
 </template>
-

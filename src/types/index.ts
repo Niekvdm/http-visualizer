@@ -148,6 +148,7 @@ export interface CollectionFolder {
   id: string
   name: string
   collapsed: boolean
+  auth?: HttpAuth
   createdAt: number
   updatedAt: number
 }

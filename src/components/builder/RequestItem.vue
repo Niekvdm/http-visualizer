@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import type { CollectionRequest } from '@/types'
+import { useCollectionStore } from '@/stores/collectionStore'
 import { getMethodColor } from '@/utils/formatters'
 import { 
   MoreVertical, 
@@ -8,7 +9,8 @@ import {
   Trash2, 
   Play,
   Copy,
-  GripVertical
+  GripVertical,
+  Lock
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -18,6 +20,8 @@ const props = defineProps<{
   isDragging?: boolean
 }>()
 
+const collectionStore = useCollectionStore()
+
 // Safe method color that handles undefined request during drag
 const methodColor = computed(() => {
   if (!props.request?.method) return ''
@@ -26,6 +30,26 @@ const methodColor = computed(() => {
 
 const methodDisplay = computed(() => props.request?.method || 'GET')
 const nameDisplay = computed(() => props.request?.name || '')
+
+// Check if request has its own auth (not inherited)
+const hasOwnAuth = computed(() => {
+  if (!props.request) return false
+  return props.request.auth != null && props.request.auth.type !== 'none'
+})
+
+// Get auth tooltip text
+const authTooltip = computed(() => {
+  if (!props.request?.auth) return ''
+  
+  const labels: Record<string, string> = {
+    'basic': 'Basic Auth',
+    'bearer': 'Bearer Token',
+    'api-key': 'API Key',
+    'oauth2': 'OAuth2',
+  }
+  
+  return labels[props.request.auth.type] || 'Auth'
+})
 
 const emit = defineEmits<{
   'select': []
@@ -118,6 +142,13 @@ function handleDelete() {
     <span class="text-sm text-[var(--color-text)] truncate flex-1">
       {{ nameDisplay }}
     </span>
+
+    <!-- Auth indicator (only for own auth, not inherited) -->
+    <Lock 
+      v-if="hasOwnAuth"
+      class="w-3 h-3 text-[var(--color-warning)] shrink-0"
+      :title="authTooltip"
+    />
 
     <!-- Run button -->
     <button
