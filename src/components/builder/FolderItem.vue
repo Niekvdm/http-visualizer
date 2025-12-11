@@ -3,7 +3,8 @@ import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
 import type { CollectionFolder, CollectionRequest } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useRequestStore } from '@/stores/requestStore'
-import { getMethodColor } from '@/utils/formatters'
+import RequestItem from './RequestItem.vue'
+import draggable from 'vuedraggable'
 import { 
   ChevronRight, 
   Folder, 
@@ -11,9 +12,8 @@ import {
   FilePlus, 
   MoreVertical, 
   Pencil, 
-  Trash2, 
-  Play,
-  Copy
+  Trash2,
+  GripVertical
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -36,12 +36,34 @@ const isRenaming = ref(false)
 const renameInput = ref('')
 const menuRef = ref<HTMLElement | null>(null)
 
-// Request menu state
-const showRequestMenu = ref<string | null>(null)
-const requestMenuRef = ref<HTMLElement | null>(null)
-
 const isSelected = computed(() => collectionStore.selectedFolderId === props.folder.id)
 const isCollapsed = computed(() => props.folder.collapsed)
+
+// Local array for draggable - keeps in sync with props.requests
+const localRequests = ref<CollectionRequest[]>([...props.requests])
+
+// Watch for external changes to requests prop and sync local array
+watch(() => props.requests, (newRequests) => {
+  // Only update if the arrays are different (to avoid infinite loops)
+  const newIds = newRequests.map(r => r.id).join(',')
+  const localIds = localRequests.value.map(r => r.id).join(',')
+  if (newIds !== localIds) {
+    localRequests.value = [...newRequests]
+  }
+}, { deep: true })
+
+// Handle request reorder within folder on drag end
+function onFolderRequestDragEnd() {
+  // Get all requests from this collection
+  const collection = collectionStore.collections.find(c => c.id === props.collectionId)
+  if (!collection) return
+
+  // Get requests NOT in this folder
+  const otherRequests = collection.requests.filter(r => r.folderId !== props.folder.id)
+  
+  // Combine with current folder requests (already reordered by vuedraggable in localRequests)
+  collectionStore.reorderRequests(props.collectionId, [...otherRequests, ...localRequests.value])
+}
 
 function toggleCollapse() {
   collectionStore.toggleFolderCollapse(props.collectionId, props.folder.id)
@@ -93,10 +115,8 @@ function editRequest(requestId: string) {
   emit('edit-request', requestId)
 }
 
-// Request menu actions
 function duplicateRequest(requestId: string) {
   collectionStore.duplicateRequest(props.collectionId, requestId)
-  showRequestMenu.value = null
 }
 
 function deleteRequest(requestId: string) {
@@ -104,30 +124,26 @@ function deleteRequest(requestId: string) {
   if (request && confirm(`Delete request "${request.name}"?`)) {
     collectionStore.deleteRequest(props.collectionId, requestId)
   }
-  showRequestMenu.value = null
 }
 
-function toggleRequestMenu(requestId: string) {
-  showRequestMenu.value = showRequestMenu.value === requestId ? null : requestId
+// Handle request added to this folder (dropped from root or another folder)
+function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequest } }) {
+  // The @add event wraps the data in an 'added' property
+  const added = evt.added
+  if (!added?.element?.id) return
+  
+  // Request was dropped here - update its folderId
+  collectionStore.moveRequestToFolder(props.collectionId, added.element.id, props.folder.id)
 }
 
-// Refs for dropdown menus (teleported to body)
+// Refs for dropdown menu (teleported to body)
 const folderDropdownRef = ref<HTMLElement | null>(null)
-const requestDropdownRef = ref<HTMLElement | null>(null)
 
 // Close menu when clicking outside the dropdown
 function onClickOutside(e: MouseEvent) {
   const target = e.target as Node
   if (folderDropdownRef.value && !folderDropdownRef.value.contains(target)) {
     showMenu.value = false
-  }
-}
-
-// Close request menu when clicking outside the dropdown
-function onRequestMenuClickOutside(e: MouseEvent) {
-  const target = e.target as Node
-  if (requestDropdownRef.value && !requestDropdownRef.value.contains(target)) {
-    showRequestMenu.value = null
   }
 }
 
@@ -143,21 +159,9 @@ watch(showMenu, (isOpen) => {
   }
 })
 
-// Add/remove click listener when request menu opens/closes
-watch(showRequestMenu, (requestId) => {
-  if (requestId) {
-    nextTick(() => {
-      document.addEventListener('click', onRequestMenuClickOutside, true)
-    })
-  } else {
-    document.removeEventListener('click', onRequestMenuClickOutside, true)
-  }
-})
-
 // Cleanup on unmount
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside, true)
-  document.removeEventListener('click', onRequestMenuClickOutside, true)
 })
 </script>
 
@@ -173,6 +177,11 @@ onUnmounted(() => {
       ]"
       @click="selectFolder"
     >
+      <!-- Drag handle for folder -->
+      <div class="folder-drag-handle cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100 shrink-0">
+        <GripVertical class="w-3 h-3 text-[var(--color-text-dim)]" />
+      </div>
+
       <!-- Collapse toggle -->
       <button
         class="p-0.5 rounded hover:bg-[var(--color-bg-tertiary)] transition-transform duration-200 shrink-0"
@@ -267,90 +276,30 @@ onUnmounted(() => {
     >
       <div class="overflow-hidden">
         <div class="pl-5 space-y-0.5 mt-0.5">
-          <!-- Requests in folder -->
-          <div
-            v-for="request in requests"
-            :key="request.id"
-            class="flex items-center gap-2 px-2 py-1 rounded cursor-pointer group transition-colors select-none"
-            :class="[
-              collectionStore.selectedRequestId === request.id
-                ? 'bg-[var(--color-primary)]/15 border border-[var(--color-primary)]/40'
-                : 'hover:bg-[var(--color-bg-tertiary)] border border-transparent'
-            ]"
-            @click="selectRequest(request.id)"
-            @dblclick="editRequest(request.id)"
+          <!-- Requests in folder (draggable) -->
+          <draggable
+            v-model="localRequests"
+            :group="{ name: 'requests-' + collectionId }"
+            item-key="id"
+            handle=".drag-handle"
+            :animation="200"
+            ghost-class="opacity-50"
+            @end="onFolderRequestDragEnd"
+            @add="onRequestAdd"
           >
-            <span 
-              class="text-[9px] font-bold px-1 py-0.5 rounded bg-[var(--color-bg)] font-mono shrink-0"
-              :class="getMethodColor(request.method)"
-            >
-              {{ request.method }}
-            </span>
-            <span class="text-xs text-[var(--color-text)] truncate flex-1">
-              {{ request.name }}
-            </span>
-            <button
-              class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-primary)]/20 transition-opacity shrink-0"
-              title="Run request"
-              @click.stop="runRequest(request.id)"
-            >
-              <Play class="w-3.5 h-3.5 text-[var(--color-primary)]" />
-            </button>
-            
-            <!-- Request context menu -->
-            <div class="relative" :ref="el => { if (showRequestMenu === request.id) requestMenuRef = el as HTMLElement }">
-              <button
-                class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
-                title="More options"
-                @click.stop="toggleRequestMenu(request.id)"
-              >
-                <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
-              </button>
-
-              <!-- Request dropdown menu -->
-              <Teleport to="body">
-                <div
-                  v-if="showRequestMenu === request.id"
-                  :ref="el => { requestDropdownRef = el as HTMLElement }"
-                  class="fixed z-[200] min-w-[160px] py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded shadow-xl"
-                  :style="{
-                    top: requestMenuRef ? `${requestMenuRef.getBoundingClientRect().bottom + 4}px` : '0',
-                    left: requestMenuRef ? `${requestMenuRef.getBoundingClientRect().left - 100}px` : '0'
-                  }"
-                >
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="editRequest(request.id); showRequestMenu = null"
-                  >
-                    <Pencil class="w-4 h-4" />
-                    Edit
-                  </button>
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="runRequest(request.id); showRequestMenu = null"
-                  >
-                    <Play class="w-4 h-4" />
-                    Run
-                  </button>
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="duplicateRequest(request.id)"
-                  >
-                    <Copy class="w-4 h-4" />
-                    Duplicate
-                  </button>
-                  <div class="my-1 border-t border-[var(--color-border)]" />
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="deleteRequest(request.id)"
-                  >
-                    <Trash2 class="w-4 h-4" />
-                    Delete
-                  </button>
-                </div>
-              </Teleport>
-            </div>
-          </div>
+            <template #item="{ element: request }">
+              <RequestItem
+                :request="request"
+                :collection-id="collectionId"
+                :is-selected="collectionStore.selectedRequestId === request.id"
+                @select="selectRequest(request.id)"
+                @edit="editRequest(request.id)"
+                @run="runRequest(request.id)"
+                @duplicate="duplicateRequest(request.id)"
+                @delete="deleteRequest(request.id)"
+              />
+            </template>
+          </draggable>
 
           <!-- Empty state -->
           <div
@@ -364,4 +313,3 @@ onUnmounted(() => {
     </div>
   </div>
 </template>
-

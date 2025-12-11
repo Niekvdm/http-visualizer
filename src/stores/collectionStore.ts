@@ -313,6 +313,68 @@ export const useCollectionStore = defineStore('collections', () => {
     }
   }
 
+  // Reorder requests within a collection (updates the entire requests array order)
+  function reorderRequests(collectionId: string, reorderedRequests: CollectionRequest[]) {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return
+
+    collection.requests = reorderedRequests
+    collection.updatedAt = Date.now()
+  }
+
+  // Reorder folders within a collection
+  function reorderFolders(collectionId: string, reorderedFolders: CollectionFolder[]) {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return
+
+    collection.folders = reorderedFolders
+    collection.updatedAt = Date.now()
+  }
+
+  // Move request to a different folder within the same collection
+  function moveRequestToFolder(collectionId: string, requestId: string, targetFolderId: string | undefined) {
+    const collection = collections.value.find(c => c.id === collectionId)
+    if (!collection) return
+
+    const request = collection.requests.find(r => r.id === requestId)
+    if (request) {
+      request.folderId = targetFolderId
+      request.updatedAt = Date.now()
+      collection.updatedAt = Date.now()
+    }
+  }
+
+  // Move request to a different collection
+  function moveRequestToCollection(
+    requestId: string, 
+    sourceCollectionId: string, 
+    targetCollectionId: string, 
+    targetFolderId?: string
+  ) {
+    const sourceCollection = collections.value.find(c => c.id === sourceCollectionId)
+    const targetCollection = collections.value.find(c => c.id === targetCollectionId)
+    if (!sourceCollection || !targetCollection) return
+
+    const requestIndex = sourceCollection.requests.findIndex(r => r.id === requestId)
+    if (requestIndex < 0) return
+
+    // Remove from source
+    const [request] = sourceCollection.requests.splice(requestIndex, 1)
+    sourceCollection.updatedAt = Date.now()
+
+    // Add to target
+    request.folderId = targetFolderId
+    request.updatedAt = Date.now()
+    targetCollection.requests.push(request)
+    targetCollection.updatedAt = Date.now()
+
+    // Update selection if needed
+    if (selectedRequestId.value === requestId) {
+      selectedCollectionId.value = targetCollectionId
+      selectedFolderId.value = targetFolderId || null
+    }
+  }
+
   // Selection
   function selectCollection(id: string) {
     selectedCollectionId.value = id
@@ -420,6 +482,10 @@ export const useCollectionStore = defineStore('collections', () => {
     deleteRequest,
     duplicateRequest,
     moveRequest,
+    reorderRequests,
+    reorderFolders,
+    moveRequestToFolder,
+    moveRequestToCollection,
 
     // Selection
     selectCollection,

@@ -1,20 +1,18 @@
 <script setup lang="ts">
 import { ref, computed, watch, onUnmounted, nextTick } from 'vue'
-import type { Collection, CollectionRequest } from '@/types'
+import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useRequestStore } from '@/stores/requestStore'
-import { getMethodColor } from '@/utils/formatters'
 import FolderItem from './FolderItem.vue'
+import RequestItem from './RequestItem.vue'
+import draggable from 'vuedraggable'
 import { 
   ChevronRight, 
   FolderPlus, 
   FilePlus, 
   MoreVertical, 
   Pencil, 
-  Trash2, 
-  Play,
-  GripVertical,
-  Copy
+  Trash2
 } from 'lucide-vue-next'
 
 const props = defineProps<{
@@ -36,10 +34,6 @@ const isRenaming = ref(false)
 const renameInput = ref('')
 const menuRef = ref<HTMLElement | null>(null)
 
-// Request menu state
-const showRequestMenu = ref<string | null>(null)
-const requestMenuRef = ref<HTMLElement | null>(null)
-
 const isSelected = computed(() => collectionStore.selectedCollectionId === props.collection.id)
 const isCollapsed = computed(() => props.collection.collapsed)
 
@@ -47,6 +41,40 @@ const isCollapsed = computed(() => props.collection.collapsed)
 const rootRequests = computed(() => 
   collectionStore.getRootRequests(props.collection.id)
 )
+
+// Local arrays for draggable - keeps in sync with store
+const localFolders = ref([...props.collection.folders])
+const localRootRequests = ref([...rootRequests.value])
+
+// Watch for external changes and sync local arrays
+watch(() => props.collection.folders, (newFolders) => {
+  const newIds = newFolders.map(f => f.id).join(',')
+  const localIds = localFolders.value.map(f => f.id).join(',')
+  if (newIds !== localIds) {
+    localFolders.value = [...newFolders]
+  }
+}, { deep: true })
+
+watch(rootRequests, (newRequests) => {
+  const newIds = newRequests.map(r => r.id).join(',')
+  const localIds = localRootRequests.value.map(r => r.id).join(',')
+  if (newIds !== localIds) {
+    localRootRequests.value = [...newRequests]
+  }
+}, { deep: true })
+
+// Handle folder reorder on drag end
+function onFolderDragEnd() {
+  // Persist the reordered folders from local array
+  collectionStore.reorderFolders(props.collection.id, [...localFolders.value])
+}
+
+// Handle root request reorder on drag end
+function onRootRequestDragEnd() {
+  // Persist the current order from local array
+  const folderRequests = props.collection.requests.filter(r => r.folderId)
+  collectionStore.reorderRequests(props.collection.id, [...localRootRequests.value, ...folderRequests])
+}
 
 function toggleCollapse() {
   collectionStore.toggleCollectionCollapse(props.collection.id)
@@ -103,15 +131,8 @@ function editRequest(requestId: string) {
   emit('edit-request', requestId, props.collection.id)
 }
 
-function onRequestContextMenu(e: MouseEvent, request: CollectionRequest) {
-  e.preventDefault()
-  showRequestMenu.value = request.id
-}
-
-// Request menu actions
 function duplicateRequest(requestId: string) {
   collectionStore.duplicateRequest(props.collection.id, requestId)
-  showRequestMenu.value = null
 }
 
 function deleteRequest(requestId: string) {
@@ -119,30 +140,27 @@ function deleteRequest(requestId: string) {
   if (request && confirm(`Delete request "${request.name}"?`)) {
     collectionStore.deleteRequest(props.collection.id, requestId)
   }
-  showRequestMenu.value = null
 }
 
-function toggleRequestMenu(requestId: string) {
-  showRequestMenu.value = showRequestMenu.value === requestId ? null : requestId
+// Handle request added to root (dropped from folder)
+// Handle request added to root (dropped from folder)
+function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequest } }) {
+  // The @add event wraps the data in an 'added' property
+  const added = evt.added
+  if (!added?.element?.id) return
+  
+  // Request was dropped here from a folder - update its folderId to undefined (root level)
+  collectionStore.moveRequestToFolder(props.collection.id, added.element.id, undefined)
 }
 
-// Refs for dropdown menus (teleported to body)
+// Refs for dropdown menu (teleported to body)
 const collectionDropdownRef = ref<HTMLElement | null>(null)
-const requestDropdownRef = ref<HTMLElement | null>(null)
 
 // Close menu when clicking outside the dropdown
 function onClickOutside(e: MouseEvent) {
   const target = e.target as Node
   if (collectionDropdownRef.value && !collectionDropdownRef.value.contains(target)) {
     showMenu.value = false
-  }
-}
-
-// Close request menu when clicking outside the dropdown
-function onRequestMenuClickOutside(e: MouseEvent) {
-  const target = e.target as Node
-  if (requestDropdownRef.value && !requestDropdownRef.value.contains(target)) {
-    showRequestMenu.value = null
   }
 }
 
@@ -158,21 +176,9 @@ watch(showMenu, (isOpen) => {
   }
 })
 
-// Add/remove click listener when request menu opens/closes
-watch(showRequestMenu, (requestId) => {
-  if (requestId) {
-    nextTick(() => {
-      document.addEventListener('click', onRequestMenuClickOutside, true)
-    })
-  } else {
-    document.removeEventListener('click', onRequestMenuClickOutside, true)
-  }
-})
-
 // Cleanup on unmount
 onUnmounted(() => {
   document.removeEventListener('click', onClickOutside, true)
-  document.removeEventListener('click', onRequestMenuClickOutside, true)
 })
 </script>
 
@@ -283,106 +289,54 @@ onUnmounted(() => {
     >
       <div class="overflow-hidden">
         <div class="pl-4 space-y-0.5 mt-1">
-          <!-- Folders -->
-          <FolderItem
-            v-for="folder in collection.folders"
-            :key="folder.id"
-            :folder="folder"
-            :collection-id="collection.id"
-            :requests="collectionStore.getRequestsInFolder(collection.id, folder.id)"
-            @run-request="(id) => runRequest(id)"
-            @edit-request="(id) => editRequest(id)"
-            @new-request="(folderId) => emit('new-request', collection.id, folderId)"
-          />
-
-          <!-- Root-level requests -->
-          <div
-            v-for="request in rootRequests"
-            :key="request.id"
-            class="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer group transition-colors select-none"
-            :class="[
-              collectionStore.selectedRequestId === request.id
-                ? 'bg-[var(--color-primary)]/15 border border-[var(--color-primary)]/40'
-                : 'hover:bg-[var(--color-bg-tertiary)] border border-transparent'
-            ]"
-            @click="selectRequest(request.id)"
-            @dblclick="editRequest(request.id)"
-            @contextmenu="onRequestContextMenu($event, request)"
+          <!-- Folders (draggable) -->
+          <draggable
+            v-model="localFolders"
+            :group="{ name: 'folders-' + collection.id, pull: false, put: false }"
+            item-key="id"
+            handle=".folder-drag-handle"
+            :animation="200"
+            ghost-class="opacity-50"
+            @end="onFolderDragEnd"
           >
-            <span 
-              class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-[var(--color-bg)] font-mono shrink-0"
-              :class="getMethodColor(request.method)"
-            >
-              {{ request.method }}
-            </span>
-            <span class="text-sm text-[var(--color-text)] truncate flex-1">
-              {{ request.name }}
-            </span>
-            <button
-              class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-primary)]/20 transition-opacity shrink-0"
-              title="Run request"
-              @click.stop="runRequest(request.id)"
-            >
-              <Play class="w-3.5 h-3.5 text-[var(--color-primary)]" />
-            </button>
-            
-            <!-- Request context menu -->
-            <div class="relative" :ref="el => { if (showRequestMenu === request.id) requestMenuRef = el as HTMLElement }">
-              <button
-                class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
-                title="More options"
-                @click.stop="toggleRequestMenu(request.id)"
-              >
-                <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
-              </button>
+            <template #item="{ element: folder }">
+              <FolderItem
+                :folder="folder"
+                :collection-id="collection.id"
+                :requests="collectionStore.getRequestsInFolder(collection.id, folder.id)"
+                @run-request="(id) => runRequest(id)"
+                @edit-request="(id) => editRequest(id)"
+                @new-request="(folderId) => emit('new-request', collection.id, folderId)"
+              />
+            </template>
+          </draggable>
 
-              <!-- Request dropdown menu -->
-              <Teleport to="body">
-                <div
-                  v-if="showRequestMenu === request.id"
-                  :ref="el => { requestDropdownRef = el as HTMLElement }"
-                  class="fixed z-[200] min-w-[160px] py-1 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded shadow-xl"
-                  :style="{
-                    top: requestMenuRef ? `${requestMenuRef.getBoundingClientRect().bottom + 4}px` : '0',
-                    left: requestMenuRef ? `${requestMenuRef.getBoundingClientRect().left - 100}px` : '0'
-                  }"
-                >
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="editRequest(request.id); showRequestMenu = null"
-                  >
-                    <Pencil class="w-4 h-4" />
-                    Edit
-                  </button>
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="runRequest(request.id); showRequestMenu = null"
-                  >
-                    <Play class="w-4 h-4" />
-                    Run
-                  </button>
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="duplicateRequest(request.id)"
-                  >
-                    <Copy class="w-4 h-4" />
-                    Duplicate
-                  </button>
-                  <div class="my-1 border-t border-[var(--color-border)]" />
-                  <button
-                    class="w-full px-3 py-1.5 text-left text-sm text-[var(--color-error)] hover:bg-[var(--color-bg-tertiary)] flex items-center gap-2"
-                    @click="deleteRequest(request.id)"
-                  >
-                    <Trash2 class="w-4 h-4" />
-                    Delete
-                  </button>
-                </div>
-              </Teleport>
-            </div>
-          </div>
+          <!-- Root-level requests (draggable) -->
+          <draggable
+            v-model="localRootRequests"
+            :group="{ name: 'requests-' + collection.id }"
+            item-key="id"
+            handle=".drag-handle"
+            :animation="200"
+            ghost-class="opacity-50"
+            @end="onRootRequestDragEnd"
+            @add="onRequestAdd"
+          >
+            <template #item="{ element: request }">
+              <RequestItem
+                :request="request"
+                :collection-id="collection.id"
+                :is-selected="collectionStore.selectedRequestId === request.id"
+                @select="selectRequest(request.id)"
+                @edit="editRequest(request.id)"
+                @run="runRequest(request.id)"
+                @duplicate="duplicateRequest(request.id)"
+                @delete="deleteRequest(request.id)"
+              />
+            </template>
+          </draggable>
         </div>
       </div>
     </div>
   </div>
 </template>
-
