@@ -20,6 +20,47 @@ const MESSAGE_TYPES = {
   DISCONNECT: 'HTTP_VISUALIZER_DISCONNECT',
 }
 
+// Detailed timing from extension
+export interface ExtensionTiming {
+  total: number
+  dns?: number
+  tcp?: number
+  tls?: number
+  ttfb?: number
+  download?: number
+  blocked?: number
+}
+
+// Redirect hop info from extension
+export interface ExtensionRedirectHop {
+  url: string
+  status: number
+  duration: number
+  headers?: Record<string, string>
+}
+
+// TLS info from extension
+export interface ExtensionTlsInfo {
+  protocol?: string
+  cipher?: string
+  issuer?: string
+  subject?: string
+  validFrom?: number
+  validTo?: number
+  valid?: boolean
+}
+
+// Size breakdown from extension
+export interface ExtensionSizeBreakdown {
+  headers: number
+  body: number
+  total: number
+  compressed?: number
+  uncompressed?: number
+  encoding?: string
+  compressionRatio?: number
+}
+
 // Response from extension for HTTP requests
 export interface ExtensionResponse {
   success: boolean
@@ -32,11 +73,12 @@ export interface ExtensionResponse {
     bodyBase64?: string | null
     isBinary: boolean
     size: number
-    timing: {
-      total: number
-    }
+    timing: ExtensionTiming
     url: string
     redirected: boolean
+    redirectChain?: ExtensionRedirectHop[]
+    tls?: ExtensionTlsInfo
+    sizeBreakdown?: ExtensionSizeBreakdown
   }
   error?: {
     message: string

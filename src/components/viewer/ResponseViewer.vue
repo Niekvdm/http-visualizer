@@ -5,9 +5,9 @@ import { formatBytes, formatDuration, getStatusColor } from '@/utils/formatters'
 import JsonTreeView from './JsonTreeView.vue'
 import RawView from './RawView.vue'
 import TableView from './TableView.vue'
-import { AlertTriangle, RefreshCw, Bomb, Radio, Lock, Unlock, ChevronDown } from 'lucide-vue-next'
+import { AlertTriangle, RefreshCw, Bomb, Radio, Lock, Unlock, ChevronDown, Clock, ArrowRight, Shield, FileText } from 'lucide-vue-next'
 
-type ViewTab = 'request' | 'json' | 'raw' | 'table' | 'headers'
+type ViewTab = 'request' | 'json' | 'raw' | 'table' | 'headers' | 'timing'
 
 const requestStore = useRequestStore()
 const activeTab = defineModel<ViewTab>('activeTab', { default: 'json' })
@@ -45,6 +45,25 @@ const headersArray = computed(() => {
   if (!response.value?.headers) return []
   return Object.entries(response.value.headers)
 })
+
+// Timing data
+const timing = computed(() => response.value?.timing)
+const hasDetailedTiming = computed(() => {
+  const t = timing.value
+  if (!t) return false
+  return t.dns !== undefined || t.tcp !== undefined || t.tls !== undefined || t.ttfb !== undefined || t.download !== undefined
+})
+
+// Redirect chain
+const redirectChain = computed(() => response.value?.redirectChain || [])
+const hasRedirects = computed(() => redirectChain.value.length > 0)
+
+// Size breakdown
+const sizeBreakdown = computed(() => response.value?.sizeBreakdown)
+const hasSizeBreakdown = computed(() => sizeBreakdown.value !== undefined)
+
+// TLS info
+const tlsInfo = computed(() => response.value?.tls)
 
 const requestHeadersArray = computed(() => {
   if (!sentRequest.value?.headers) return []
@@ -142,7 +161,7 @@ function isHeaderRevealed(key: string): boolean {
           
           <!-- Response tabs -->
           <button 
-            v-for="tab in (['json', 'raw', 'table', 'headers'] as ViewTab[])"
+            v-for="tab in (['json', 'raw', 'table', 'headers', 'timing'] as ViewTab[])"
             :key="tab"
             class="px-3 py-1 text-xs font-mono uppercase tracking-wider rounded transition-colors"
             :class="[
@@ -393,6 +412,208 @@ function isHeaderRevealed(key: string): boolean {
             
             <div v-if="headersArray.length === 0" class="text-[var(--color-text-dim)] text-center py-8">
               No headers in response
+            </div>
+          </div>
+
+          <!-- Timing View -->
+          <div v-show="activeTab === 'timing'" class="h-full overflow-auto p-4">
+            <div class="space-y-6">
+              <!-- Timing Waterfall -->
+              <div class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
+                <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <Clock class="w-4 h-4 text-[var(--color-primary)]" />
+                  <span class="text-xs font-bold text-[var(--color-text-dim)] uppercase tracking-wider">
+                    Timing Breakdown
+                  </span>
+                </div>
+                <div class="p-4">
+                  <template v-if="hasDetailedTiming && timing">
+                    <div class="space-y-3">
+                      <!-- DNS -->
+                      <div v-if="timing.dns !== undefined" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">DNS</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div 
+                            class="h-full bg-green-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.dns / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.dns.toFixed(0) }}ms</span>
+                      </div>
+                      <!-- TCP -->
+                      <div v-if="timing.tcp !== undefined" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">TCP</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div 
+                            class="h-full bg-blue-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.tcp / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.tcp.toFixed(0) }}ms</span>
+                      </div>
+                      <!-- TLS -->
+                      <div v-if="timing.tls !== undefined && timing.tls > 0" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">TLS</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div 
+                            class="h-full bg-purple-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.tls / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.tls.toFixed(0) }}ms</span>
+                      </div>
+                      <!-- TTFB -->
+                      <div v-if="timing.ttfb !== undefined" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">TTFB</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div 
+                            class="h-full bg-orange-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.ttfb / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.ttfb.toFixed(0) }}ms</span>
+                      </div>
+                      <!-- Download -->
+                      <div v-if="timing.download !== undefined" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">Download</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div 
+                            class="h-full bg-cyan-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.download / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.download.toFixed(0) }}ms</span>
+                      </div>
+                      <!-- Total -->
+                      <div class="flex items-center gap-3 pt-2 border-t border-[var(--color-border)]">
+                        <span class="w-20 text-xs text-[var(--color-primary)] font-mono font-bold">TOTAL</span>
+                        <div class="flex-1" />
+                        <span class="w-16 text-right text-sm text-[var(--color-primary)] font-mono font-bold">{{ timing.total.toFixed(0) }}ms</span>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else-if="timing">
+                    <div class="text-center py-4">
+                      <div class="text-2xl font-mono text-[var(--color-primary)] font-bold">{{ timing.total.toFixed(0) }}ms</div>
+                      <div class="text-xs text-[var(--color-text-dim)] mt-1">Total request time</div>
+                      <div class="text-xs text-[var(--color-text-dim)] mt-2">
+                        Detailed timing breakdown not available for this request
+                      </div>
+                      <div class="text-xs text-[var(--color-text-dim)] mt-1 opacity-60">
+                        (Cross-origin requests may not expose timing details)
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Redirect Chain -->
+              <div v-if="hasRedirects" class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
+                <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <ArrowRight class="w-4 h-4 text-[var(--color-secondary)]" />
+                  <span class="text-xs font-bold text-[var(--color-text-dim)] uppercase tracking-wider">
+                    Redirect Chain ({{ redirectChain.length }} redirects)
+                  </span>
+                </div>
+                <div class="p-4">
+                  <div class="space-y-2">
+                    <div 
+                      v-for="(hop, index) in redirectChain" 
+                      :key="index"
+                      class="flex items-start gap-3 text-sm"
+                    >
+                      <span 
+                        class="px-2 py-0.5 rounded text-xs font-bold shrink-0"
+                        :class="{
+                          'bg-yellow-500/20 text-yellow-400': hop.status === 301 || hop.status === 308,
+                          'bg-orange-500/20 text-orange-400': hop.status === 302 || hop.status === 307,
+                          'bg-blue-500/20 text-blue-400': hop.status === 303,
+                        }"
+                      >
+                        {{ hop.status }}
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <code class="text-[var(--color-text)] break-all text-xs">{{ hop.url }}</code>
+                        <div class="text-xs text-[var(--color-text-dim)] mt-0.5">{{ hop.duration.toFixed(0) }}ms</div>
+                      </div>
+                    </div>
+                    <!-- Final destination -->
+                    <div class="flex items-start gap-3 text-sm pt-2 border-t border-[var(--color-border)]">
+                      <span class="px-2 py-0.5 rounded text-xs font-bold bg-green-500/20 text-green-400 shrink-0">
+                        {{ response?.status }}
+                      </span>
+                      <div class="flex-1 min-w-0">
+                        <code class="text-[var(--color-primary)] break-all text-xs font-bold">{{ response?.url || 'Final URL' }}</code>
+                        <div class="text-xs text-[var(--color-text-dim)] mt-0.5">Final destination</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Size Breakdown -->
+              <div class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
+                <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <FileText class="w-4 h-4 text-[var(--color-primary)]" />
+                  <span class="text-xs font-bold text-[var(--color-text-dim)] uppercase tracking-wider">
+                    Size Breakdown
+                  </span>
+                </div>
+                <div class="p-4">
+                  <template v-if="hasSizeBreakdown && sizeBreakdown">
+                    <div class="grid grid-cols-2 gap-4">
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Headers</div>
+                        <div class="text-lg font-mono text-[var(--color-text)]">{{ formatBytes(sizeBreakdown.headers) }}</div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Body</div>
+                        <div class="text-lg font-mono text-[var(--color-text)]">{{ formatBytes(sizeBreakdown.body) }}</div>
+                      </div>
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Total</div>
+                        <div class="text-lg font-mono text-[var(--color-primary)] font-bold">{{ formatBytes(sizeBreakdown.total) }}</div>
+                      </div>
+                      <div v-if="sizeBreakdown.encoding && sizeBreakdown.encoding !== 'identity'">
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1"></div>
+                        <div class="flex items-center gap-2">
+                          <span class="text-lg font-mono text-green-400">{{ sizeBreakdown.encoding.toUpperCase() }}</span>
+                          <span v-if="sizeBreakdown.compressionRatio" class="text-xs text-green-400">
+                            ({{ ((1 - sizeBreakdown.compressionRatio) * 100).toFixed(0) }}% saved)
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                  <template v-else>
+                    <div class="text-center py-4">
+                      <div class="text-2xl font-mono text-[var(--color-primary)] font-bold">{{ formatBytes(response?.size || 0) }}</div>
+                      <div class="text-xs text-[var(--color-text-dim)] mt-1">Total response size</div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- TLS Info -->
+              <div v-if="tlsInfo" class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
+                <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <Shield class="w-4 h-4 text-green-400" />
+                  <span class="text-xs font-bold text-[var(--color-text-dim)] uppercase tracking-wider">
+                    TLS / SSL
+                  </span>
+                </div>
+                <div class="p-4">
+                  <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <Lock class="w-5 h-5 text-green-400" />
+                    </div>
+                    <div>
+                      <div class="text-sm text-[var(--color-text)] font-medium">{{ tlsInfo.protocol || 'HTTPS' }}</div>
+                      <div class="text-xs text-[var(--color-text-dim)]">Secure connection</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
         </template>

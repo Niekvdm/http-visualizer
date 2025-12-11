@@ -130,9 +130,22 @@ export function useRequestExecutor() {
           body: data.body,
           bodyParsed,
           size: data.size,
+          // Use extension's detailed timing if available, fallback to measured duration
           timing: {
-            total: duration,
+            total: data.timing?.total ?? duration,
+            dns: data.timing?.dns,
+            tcp: data.timing?.tcp,
+            tls: data.timing?.tls,
+            ttfb: data.timing?.ttfb,
+            download: data.timing?.download,
+            blocked: data.timing?.blocked,
           },
+          // Additional extension data
+          url: data.url,
+          redirected: data.redirected,
+          redirectChain: data.redirectChain,
+          tls: data.tls,
+          sizeBreakdown: data.sizeBreakdown,
         }
       } else {
         // Direct fetch (may hit CORS)
