@@ -900,78 +900,169 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     // Only draw if we have timing data and a response arrow
     if (this.timingBars.length === 0 || this.state !== 'complete') return
 
-    // Find the response arrow
-    const responseArrow = this.arrows.find(a => a.type === 'response' && a.progress >= 1)
+    // Find the FINAL response arrow (not a redirect)
+    const responseArrow = this.arrows.find(a => a.type === 'response' && a.progress >= 1 && !a.isRedirect)
     if (!responseArrow) return
 
-    const barHeight = 6
-    const barY = responseArrow.y + 20
     const totalDuration = this.timingBars.reduce((sum, bar) => sum + bar.duration, 0)
-    const maxBarWidth = Math.abs(responseArrow.toX - responseArrow.fromX) - 40
-    const startX = Math.min(responseArrow.fromX, responseArrow.toX) + 20
 
-    let currentX = startX
+    // Waterfall cascade design - vertical blocks flowing down from arrow midpoint
+    const cascadeX = (responseArrow.fromX + responseArrow.toX) / 2
+    const cascadeStartY = responseArrow.y + 18
+    const blockHeight = 22
+    const blockWidth = 140
+    const blockSpacing = 4
+    const connectorWidth = 2
 
-    // Draw background bar
-    this.timingGraphics.roundRect(startX - 2, barY - 2, maxBarWidth + 4, barHeight + 4, 4)
-    this.timingGraphics.fill({ color: this.options.bgColor, alpha: 0.8 })
-    this.timingGraphics.stroke({ color: this.options.textColor, width: 1, alpha: 0.2 })
+    // Animated pulse for the cascade
+    const pulseAlpha = 0.6 + 0.2 * Math.sin(this.animationTime * 3)
+    const glowPulse = 0.3 + 0.15 * Math.sin(this.animationTime * 2)
 
-    // Draw each timing segment
+    // Draw connector line from arrow to cascade
+    const connectorStartY = responseArrow.y + 8
+    this.timingGraphics.moveTo(cascadeX, connectorStartY)
+    this.timingGraphics.lineTo(cascadeX, cascadeStartY - 4)
+    this.timingGraphics.stroke({ color: this.options.primaryColor, width: connectorWidth, alpha: 0.5 })
+
+    // Small diamond connector point
+    const diamondSize = 4
+    this.timingGraphics.moveTo(cascadeX, connectorStartY)
+    this.timingGraphics.lineTo(cascadeX + diamondSize, connectorStartY + diamondSize)
+    this.timingGraphics.lineTo(cascadeX, connectorStartY + diamondSize * 2)
+    this.timingGraphics.lineTo(cascadeX - diamondSize, connectorStartY + diamondSize)
+    this.timingGraphics.closePath()
+    this.timingGraphics.fill({ color: this.options.primaryColor, alpha: 0.8 })
+
+    // Draw timing header
+    const headerY = cascadeStartY
+    const headerStyle = new TextStyle({
+      fontFamily: 'Share Tech Mono, monospace',
+      fontSize: 9,
+      fill: this.options.textColor,
+      letterSpacing: 2,
+    })
+    const headerText = new Text({ text: '─ TIMING BREAKDOWN ─', style: headerStyle })
+    headerText.anchor.set(0.5, 0)
+    headerText.x = cascadeX
+    headerText.y = headerY
+    headerText.alpha = 0.6
+    this.labelsContainer.addChild(headerText)
+
+    let currentY = cascadeStartY + 18
+
+    // Draw each timing block in the waterfall
     for (let i = 0; i < this.timingBars.length; i++) {
       const bar = this.timingBars[i]
-      const barWidth = (bar.duration / totalDuration) * maxBarWidth * Math.min(1, bar.progress)
+      if (bar.progress <= 0) continue
 
-      if (barWidth > 1) {
-        // Main bar
-        this.timingGraphics.roundRect(currentX, barY, barWidth, barHeight, 2)
-        this.timingGraphics.fill({ color: bar.color, alpha: 0.9 })
+      const blockAlpha = Math.min(1, bar.progress * 1.5)
+      const barWidthRatio = bar.duration / totalDuration
+      const actualBlockWidth = Math.max(60, blockWidth * Math.min(1, barWidthRatio * 3))
+      const blockX = cascadeX - actualBlockWidth / 2
 
-        // Highlight
-        this.timingGraphics.roundRect(currentX, barY, barWidth, barHeight / 2, 2)
-        this.timingGraphics.fill({ color: 0xffffff, alpha: 0.2 })
-      }
+      // Outer glow effect
+      this.timingGraphics.roundRect(
+        blockX - 3,
+        currentY - 2,
+        actualBlockWidth + 6,
+        blockHeight + 4,
+        6
+      )
+      this.timingGraphics.fill({ color: bar.color, alpha: glowPulse * blockAlpha * 0.4 })
 
-      currentX += (bar.duration / totalDuration) * maxBarWidth
-    }
+      // Main block background with gradient-like effect
+      this.timingGraphics.roundRect(blockX, currentY, actualBlockWidth, blockHeight, 4)
+      this.timingGraphics.fill({ color: this.options.bgColor, alpha: 0.95 * blockAlpha })
 
-    // Draw timing labels below the bar
-    const labelY = barY + barHeight + 8
-    currentX = startX
+      // Left color accent bar (the timing category indicator)
+      const accentWidth = 4
+      this.timingGraphics.roundRect(blockX, currentY, accentWidth, blockHeight, { tl: 4, bl: 4, tr: 0, br: 0 })
+      this.timingGraphics.fill({ color: bar.color, alpha: blockAlpha })
 
-    for (const bar of this.timingBars) {
-      const barWidth = (bar.duration / totalDuration) * maxBarWidth
+      // Duration progress bar inside block
+      const progressBarX = blockX + accentWidth + 6
+      const progressBarWidth = actualBlockWidth - accentWidth - 50
+      const progressBarHeight = 4
+      const progressBarY = currentY + blockHeight - 8
 
-      if (barWidth > 30 && bar.progress >= 1) {
-        const labelStyle = new TextStyle({
-          fontFamily: 'Share Tech Mono, monospace',
-          fontSize: 8,
-          fill: bar.color,
-        })
-        const label = new Text({ text: `${bar.label} ${bar.duration.toFixed(0)}ms`, style: labelStyle })
-        label.anchor.set(0.5, 0)
-        label.x = currentX + barWidth / 2
-        label.y = labelY
-        label.alpha = bar.progress
-        this.labelsContainer.addChild(label)
-      }
+      // Progress bar background
+      this.timingGraphics.roundRect(progressBarX, progressBarY, progressBarWidth, progressBarHeight, 2)
+      this.timingGraphics.fill({ color: this.options.textColor, alpha: 0.15 * blockAlpha })
 
-      currentX += barWidth
-    }
+      // Progress bar fill (proportional to duration)
+      const fillWidth = progressBarWidth * barWidthRatio * 3 // Scale up for visibility
+      this.timingGraphics.roundRect(progressBarX, progressBarY, Math.min(fillWidth, progressBarWidth), progressBarHeight, 2)
+      this.timingGraphics.fill({ color: bar.color, alpha: 0.8 * blockAlpha })
 
-    // Draw total timing label
-    if (this.timingData) {
-      const totalStyle = new TextStyle({
+      // Block border
+      this.timingGraphics.roundRect(blockX, currentY, actualBlockWidth, blockHeight, 4)
+      this.timingGraphics.stroke({ color: bar.color, width: 1, alpha: 0.4 * blockAlpha })
+
+      // Label text (timing category)
+      const labelStyle = new TextStyle({
         fontFamily: 'Share Tech Mono, monospace',
-        fontSize: 9,
+        fontSize: 10,
+        fill: bar.color,
+        fontWeight: 'bold',
+      })
+      const labelText = new Text({ text: bar.label.toUpperCase(), style: labelStyle })
+      labelText.anchor.set(0, 0.5)
+      labelText.x = blockX + accentWidth + 8
+      labelText.y = currentY + 9
+      labelText.alpha = blockAlpha
+      this.labelsContainer.addChild(labelText)
+
+      // Duration value (right-aligned)
+      const durationStyle = new TextStyle({
+        fontFamily: 'Fira Code, monospace',
+        fontSize: 11,
         fill: this.options.textColor,
         fontWeight: 'bold',
       })
-      const totalLabel = new Text({ text: `Total: ${this.timingData.total.toFixed(0)}ms`, style: totalStyle })
-      totalLabel.anchor.set(1, 0.5)
-      totalLabel.x = startX + maxBarWidth
-      totalLabel.y = barY + barHeight / 2
-      this.labelsContainer.addChild(totalLabel)
+      const durationText = new Text({ text: `${bar.duration.toFixed(0)}ms`, style: durationStyle })
+      durationText.anchor.set(1, 0.5)
+      durationText.x = blockX + actualBlockWidth - 8
+      durationText.y = currentY + 9
+      durationText.alpha = blockAlpha
+      this.labelsContainer.addChild(durationText)
+
+      // Connector line to next block
+      if (i < this.timingBars.length - 1) {
+        const nextY = currentY + blockHeight + blockSpacing
+        this.timingGraphics.moveTo(cascadeX, currentY + blockHeight)
+        this.timingGraphics.lineTo(cascadeX, nextY)
+        this.timingGraphics.stroke({ color: bar.color, width: 1, alpha: 0.3 * blockAlpha })
+
+        // Small flow indicator dot
+        this.timingGraphics.circle(cascadeX, currentY + blockHeight + blockSpacing / 2, 2)
+        this.timingGraphics.fill({ color: bar.color, alpha: 0.5 * blockAlpha })
+      }
+
+      currentY += blockHeight + blockSpacing
+    }
+
+    // Total timing footer
+    if (this.timingData) {
+      const footerY = currentY + 6
+
+      // Footer line
+      this.timingGraphics.moveTo(cascadeX - 50, footerY)
+      this.timingGraphics.lineTo(cascadeX + 50, footerY)
+      this.timingGraphics.stroke({ color: this.options.primaryColor, width: 1, alpha: 0.3 })
+
+      // Total label
+      const totalStyle = new TextStyle({
+        fontFamily: 'Fira Code, monospace',
+        fontSize: 12,
+        fill: this.options.primaryColor,
+        fontWeight: 'bold',
+      })
+      const totalText = new Text({ text: `TOTAL: ${this.timingData.total.toFixed(0)}ms`, style: totalStyle })
+      totalText.anchor.set(0.5, 0)
+      totalText.x = cascadeX
+      totalText.y = footerY + 6
+      totalText.alpha = pulseAlpha
+      this.labelsContainer.addChild(totalText)
     }
   }
 

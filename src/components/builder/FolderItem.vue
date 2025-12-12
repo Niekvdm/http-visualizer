@@ -177,7 +177,7 @@ function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequ
   <div class="folder-item">
     <!-- Folder header -->
     <div 
-      class="flex items-center gap-1 px-2 py-1 rounded cursor-pointer group transition-colors"
+      class="flex items-center gap-1 px-2 py-1.5 rounded cursor-pointer group transition-colors"
       :class="[
         isSelected 
           ? 'bg-[var(--color-secondary)]/10' 
@@ -196,7 +196,7 @@ function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequ
         :class="{ 'rotate-90': !isCollapsed }"
         @click.stop="toggleCollapse"
       >
-        <ChevronRight class="w-3 h-3 text-[var(--color-text-dim)]" />
+        <ChevronRight class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
       </button>
 
       <!-- Folder icon -->
@@ -243,9 +243,9 @@ function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequ
       <ContextMenu align="right">
         <template #trigger>
           <button
-            class="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
+            class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
           >
-            <MoreVertical class="w-3 h-3 text-[var(--color-text-dim)]" />
+            <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
           </button>
         </template>
 

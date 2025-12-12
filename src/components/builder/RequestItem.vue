@@ -90,7 +90,7 @@ function handleDelete() {
   >
     <!-- Drag handle -->
     <div class="drag-handle cursor-grab opacity-0 group-hover:opacity-50 hover:!opacity-100 shrink-0">
-      <GripVertical class="w-3 h-3 text-[var(--color-text-dim)]" />
+      <GripVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
     </div>
 
     <!-- Method badge -->
@@ -104,7 +104,7 @@ function handleDelete() {
     <!-- Auth indicator (only for own auth, not inherited) -->
     <Lock 
       v-if="hasOwnAuth"
-      class="w-3 h-3 text-[var(--color-warning)] shrink-0"
+      class="w-3.5 h-3.5 text-[var(--color-warning)] shrink-0"
       :title="authTooltip"
     />
 

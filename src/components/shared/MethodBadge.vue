@@ -25,13 +25,13 @@ const colorClass = computed(() => {
 const sizeClass = computed(() => {
   switch (props.size) {
     case 'xs':
-      return 'text-xs px-1.5 py-0.5'
+      return 'text-xs px-1.5 py-0.5 min-w-[3.5rem] text-center'
     case 'sm':
-      return 'text-sm px-2 py-1'
+      return 'text-sm px-2 py-1 min-w-[3.5rem] text-center'
     case 'md':
-      return 'text-base px-2.5 py-1.5'
+      return 'text-base px-2.5 py-1.5 min-w-[4rem] text-center'
     default:
-      return 'text-sm px-2 py-1'
+      return 'text-sm px-2 py-1 min-w-[3.5rem] text-center'
   }
 })
 </script>
