@@ -5,6 +5,7 @@ import { useFileExport } from '@/composables/useFileExport'
 import CollectionItem from './CollectionItem.vue'
 import NewRequestModal from './NewRequestModal.vue'
 import NewFolderModal from './NewFolderModal.vue'
+import CollectionExportModal from './CollectionExportModal.vue'
 import { Plus, Archive, Download, Upload } from 'lucide-vue-next'
 
 const emit = defineEmits<{
@@ -13,7 +14,7 @@ const emit = defineEmits<{
 }>()
 
 const collectionStore = useCollectionStore()
-const { exportCollections, importCollections } = useFileExport()
+const { importCollections } = useFileExport()
 
 const collections = computed(() => collectionStore.collections)
 
@@ -25,6 +26,7 @@ const showNewFolderModal = ref(false)
 const targetCollectionId = ref<string | null>(null)
 const targetFolderId = ref<string | undefined>(undefined)
 const importInput = ref<HTMLInputElement | null>(null)
+const showExportModal = ref(false)
 
 // Create new collection
 function startNewCollection() {
@@ -79,8 +81,12 @@ function onEditRequest(requestId: string, collectionId: string) {
 }
 
 // Export/Import
-function handleExport() {
-  exportCollections()
+function openExportModal() {
+  showExportModal.value = true
+}
+
+function closeExportModal() {
+  showExportModal.value = false
 }
 
 async function handleImport(e: Event) {
@@ -92,7 +98,11 @@ async function handleImport(e: Event) {
   if (!result.success) {
     alert(`Import failed: ${result.error}`)
   } else {
-    alert(`Successfully imported ${result.count} collection(s)`)
+    let message = `Successfully imported ${result.count} collection(s)`
+    if (result.environmentsImported && result.environmentsImported > 0) {
+      message += ` and ${result.environmentsImported} environment(s)`
+    }
+    alert(message)
   }
   
   input.value = ''
@@ -123,10 +133,10 @@ async function handleImport(e: Event) {
         </button>
         <button
           class="p-1.5 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-dim)] hover:text-[var(--color-secondary)] transition-colors"
-          title="Export All Collections"
+          title="Export Collections"
           :disabled="collections.length === 0"
           :class="{ 'opacity-50 cursor-not-allowed': collections.length === 0 }"
-          @click="handleExport"
+          @click="openExportModal"
         >
           <Upload class="w-4 h-4" />
         </button>
@@ -209,6 +219,13 @@ async function handleImport(e: Event) {
       v-if="showNewFolderModal && targetCollectionId"
       :collection-id="targetCollectionId"
       @close="closeNewFolderModal"
+    />
+
+    <!-- Export Modal -->
+    <CollectionExportModal
+      :show="showExportModal"
+      @close="closeExportModal"
+      @exported="closeExportModal"
     />
   </div>
 </template>

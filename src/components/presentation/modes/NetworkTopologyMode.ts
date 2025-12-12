@@ -323,6 +323,8 @@ export class NetworkTopologyMode extends Container implements IPresentationMode 
       case 'auth':
         this.nodesGraphics.roundRect(x - iconSize * 0.35, y - iconSize * 0.1, iconSize * 0.7, iconSize * 0.6, 3)
         this.nodesGraphics.stroke({ color, width: 2, alpha: 0.8 })
+        // Move to arc start point to avoid line from previous pen position
+        this.nodesGraphics.moveTo(x - iconSize * 0.25, y - iconSize * 0.1)
         this.nodesGraphics.arc(x, y - iconSize * 0.1, iconSize * 0.25, Math.PI, 0)
         this.nodesGraphics.stroke({ color, width: 2, alpha: 0.8 })
         break
@@ -663,6 +665,8 @@ export class NetworkTopologyMode extends Container implements IPresentationMode 
       // Draw lock icon
       this.detailsGraphics.roundRect(x, infoY, 10, 8, 2)
       this.detailsGraphics.stroke({ color: 0x27ca40, width: 1, alpha: 0.8 })
+      // Move to arc start point to avoid line from previous pen position
+      this.detailsGraphics.moveTo(x + 5 - 4, infoY)
       this.detailsGraphics.arc(x + 5, infoY, 4, Math.PI, 0)
       this.detailsGraphics.stroke({ color: 0x27ca40, width: 1, alpha: 0.8 })
 

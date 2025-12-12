@@ -2,6 +2,7 @@ import { ref } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useCollectionStore } from '@/stores/collectionStore'
 import { useAuthService } from '@/composables/useAuthService'
 import { useExtensionBridge, type ExtensionResponse } from '@/composables/useExtensionBridge'
 import { resolveVariables, mergeVariables } from '@/utils/variableResolver'
@@ -12,6 +13,7 @@ export function useRequestExecutor() {
   const requestStore = useRequestStore()
   const authStore = useAuthStore()
   const envStore = useEnvironmentStore()
+  const collectionStore = useCollectionStore()
   const authService = useAuthService()
   const { isExtensionAvailable, executeViaExtension } = useExtensionBridge()
   const isExecuting = ref(false)
@@ -31,9 +33,8 @@ export function useRequestExecutor() {
     })
     
     // Get resolved variables for this request
-    // Priority: file overrides > active environment > file-level variables > request variables
+    // Priority: file overrides > active environment > collection/file variables > request variables
     const variables = getResolvedVariables(request, fileId)
-    
     // Check if auth is configured (from auth store - request or file level, or from file)
     const hasConfiguredAuth = authStore.hasAuthConfig(request.id, fileId)
     const hasFileAuth = request.auth?.type !== 'none' && request.auth?.type !== undefined
@@ -320,24 +321,34 @@ export function useRequestExecutor() {
 
   /**
    * Get resolved variables for a request with proper priority chain:
-   * 1. File overrides (highest priority)
+   * 1. File/Collection overrides (highest priority)
    * 2. Active environment variables
-   * 3. File-level parsed variables
-   * 4. Request-level parsed variables (lowest priority)
+   * 3. Collection-level variables (for collection requests)
+   * 4. File-level parsed variables (for imported file requests)
+   * 5. Request-level parsed variables (lowest priority)
+   * 
+   * The sourceId can be either a fileId (for imported .http files) or 
+   * a collectionId (for manually created collections).
    */
-  function getResolvedVariables(request: ParsedRequest, fileId?: string): Record<string, string> {
-    // Get the file for its parsed variables
-    const file = fileId ? requestStore.files.find(f => f.id === fileId) : null
+  function getResolvedVariables(request: ParsedRequest, sourceId?: string): Record<string, string> {
+    // Try to find a file with this ID first
+    const file = sourceId ? requestStore.files.find(f => f.id === sourceId) : null
+    // If not a file, try to find a collection
+    const collection = sourceId && !file 
+      ? collectionStore.collections.find(c => c.id === sourceId) 
+      : null
     
     return mergeVariables(
       // Lowest priority: request-level variables
       request.variables,
-      // File-level parsed variables
+      // File-level parsed variables (for imported files)
       file?.variables,
+      // Collection-level variables (for collections)
+      collection?.variables,
       // Active environment variables
       envStore.activeVariables,
-      // Highest priority: file overrides
-      fileId ? envStore.getFileOverrides(fileId) : undefined
+      // Highest priority: file/collection overrides
+      sourceId ? envStore.getFileOverrides(sourceId) : undefined
     )
   }
 

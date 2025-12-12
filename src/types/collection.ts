@@ -51,5 +51,8 @@ export interface CollectionExport {
   version: string
   exportedAt: string
   collections: Collection[]
+  // Optional environment bundling for convenience exports
+  environments?: import('./index').Environment[]
+  activeEnvironmentId?: string | null
 }
 

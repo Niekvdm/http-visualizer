@@ -2,9 +2,10 @@
 import { ref, computed, watch } from 'vue'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useRequestStore } from '@/stores/requestStore'
+import { useFileExport } from '@/composables/useFileExport'
 import type { Environment } from '@/types'
 import NeonButton from '@/components/ui/NeonButton.vue'
-import { X } from 'lucide-vue-next'
+import { X, Download, Upload, AlertTriangle } from 'lucide-vue-next'
 
 const props = defineProps<{
   show: boolean
@@ -16,6 +17,12 @@ const emit = defineEmits<{
 
 const envStore = useEnvironmentStore()
 const requestStore = useRequestStore()
+const { exportEnvironments, importEnvironments } = useFileExport()
+
+// Import input ref
+const importInput = ref<HTMLInputElement | null>(null)
+const importError = ref<string | null>(null)
+const importSuccess = ref<string | null>(null)
 
 // Tabs: environments list or file overrides
 type Tab = 'environments' | 'file-overrides'
@@ -127,6 +134,37 @@ function addFileOverride(fileId: string) {
   setFileOverride(fileId, form.key.trim(), form.value)
   form.key = ''
   form.value = ''
+}
+
+// Export/Import functions
+function handleExport() {
+  exportEnvironments()
+}
+
+async function handleImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+
+  importError.value = null
+  importSuccess.value = null
+
+  const result = await importEnvironments(file, true)
+  if (!result.success) {
+    importError.value = result.error || 'Import failed'
+  } else {
+    importSuccess.value = `Imported ${result.count} environment${result.count !== 1 ? 's' : ''}`
+    // Clear success message after 3 seconds
+    setTimeout(() => {
+      importSuccess.value = null
+    }, 3000)
+  }
+  
+  input.value = ''
+}
+
+function triggerImport() {
+  importInput.value?.click()
 }
 </script>
 
@@ -425,7 +463,60 @@ function addFileOverride(fileId: string) {
           </div>
 
           <!-- Footer -->
-          <div class="px-3 py-2 border-t border-[var(--color-border)] flex justify-end">
+          <div class="px-3 py-2 border-t border-[var(--color-border)] flex items-center justify-between">
+            <!-- Import/Export buttons -->
+            <div class="flex items-center gap-2">
+              <button
+                class="flex items-center gap-1.5 px-2 py-1 text-xs font-mono text-[var(--color-text-dim)] hover:text-[var(--color-primary)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                title="Import Environments"
+                @click="triggerImport"
+              >
+                <Download class="w-3.5 h-3.5" />
+                IMPORT
+              </button>
+              <button
+                class="flex items-center gap-1.5 px-2 py-1 text-xs font-mono text-[var(--color-text-dim)] hover:text-[var(--color-primary)] hover:bg-[var(--color-bg-tertiary)] rounded transition-colors"
+                :disabled="environments.length === 0"
+                :class="{ 'opacity-50 cursor-not-allowed': environments.length === 0 }"
+                title="Export Environments"
+                @click="handleExport"
+              >
+                <Upload class="w-3.5 h-3.5" />
+                EXPORT
+              </button>
+              <input 
+                ref="importInput"
+                type="file" 
+                accept=".json"
+                class="hidden"
+                @change="handleImport"
+              />
+              
+              <!-- Import feedback -->
+              <Transition
+                enter-active-class="transition duration-200"
+                enter-from-class="opacity-0 translate-x-2"
+                enter-to-class="opacity-100 translate-x-0"
+                leave-active-class="transition duration-150"
+                leave-from-class="opacity-100"
+                leave-to-class="opacity-0"
+              >
+                <span 
+                  v-if="importError" 
+                  class="flex items-center gap-1 text-xs text-red-400"
+                >
+                  <AlertTriangle class="w-3 h-3" />
+                  {{ importError }}
+                </span>
+                <span 
+                  v-else-if="importSuccess" 
+                  class="text-xs text-green-400"
+                >
+                  {{ importSuccess }}
+                </span>
+              </Transition>
+            </div>
+
             <NeonButton size="sm" @click="emit('close')">DONE</NeonButton>
           </div>
         </div>

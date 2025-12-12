@@ -2,10 +2,21 @@ import { useRequestStore } from '@/stores/requestStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
-import type { ExportedSession, CollectionExport, Collection } from '@/types'
+import type { 
+  ExportedSession, 
+  CollectionExport, 
+  Collection,
+  EnvironmentExport,
+  Environment,
+  CollectionExportOptions,
+  ExportPreview,
+  SecretScanResult,
+} from '@/types'
+import { detectSecrets, redactSecrets } from '@/utils/secretDetection'
 
 const VERSION = '1.2.0'
-const COLLECTION_VERSION = '1.0.0'
+const COLLECTION_VERSION = '1.1.0' // Bumped for environment support
+const ENVIRONMENT_VERSION = '1.0.0'
 
 export function useFileExport() {
   const requestStore = useRequestStore()
@@ -213,20 +224,46 @@ export function useFileExport() {
   }
 
   // Import collections from a JSON file
-  async function importCollections(file: File, merge = true): Promise<{ success: boolean; error?: string; count?: number }> {
+  async function importCollections(file: File, merge = true): Promise<{ 
+    success: boolean
+    error?: string
+    count?: number
+    environmentsImported?: number 
+  }> {
     try {
       const content = await file.text()
-      const data = JSON.parse(content)
+      const data = JSON.parse(content) as CollectionExport
 
       // Check if this is a collection export
       if (data.collections && Array.isArray(data.collections)) {
         const collections = data.collections as Collection[]
         collectionStore.importCollections(collections, merge)
-        return { success: true, count: collections.length }
+        
+        // Import bundled environments if present (v1.1.0+)
+        let environmentsImported = 0
+        if (data.environments && Array.isArray(data.environments)) {
+          for (const env of data.environments) {
+            // Check if environment already exists
+            const existing = envStore.environments.find(e => e.name === env.name)
+            if (!existing) {
+              envStore.createEnvironment(env.name, env.variables)
+              environmentsImported++
+            }
+          }
+          // Set active environment if specified and exists
+          if (data.activeEnvironmentId) {
+            const activeEnv = envStore.environments.find(e => e.id === data.activeEnvironmentId)
+            if (activeEnv) {
+              envStore.setActiveEnvironment(activeEnv.id)
+            }
+          }
+        }
+        
+        return { success: true, count: collections.length, environmentsImported }
       }
 
       // Check if this is a session export (backward compatibility)
-      if (data.version && data.files) {
+      if (data.version && 'files' in data) {
         // This is a session file, not a collection file
         return { success: false, error: 'This is a session file. Use "Import Session" instead.' }
       }
@@ -240,13 +277,199 @@ export function useFileExport() {
     }
   }
 
+  // ============================================
+  // Environment Export/Import
+  // ============================================
+
+  /**
+   * Export all environments to a standalone JSON file
+   */
+  function exportEnvironments(): void {
+    const envState = envStore.exportState()
+    
+    if (envState.environments.length === 0) {
+      console.warn('No environments to export')
+      return
+    }
+
+    const exportData: EnvironmentExport = {
+      version: ENVIRONMENT_VERSION,
+      exportedAt: new Date().toISOString(),
+      environments: envState.environments,
+      activeEnvironmentId: envState.activeEnvironmentId,
+    }
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `http-visualizer-environments-${Date.now()}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  /**
+   * Import environments from a JSON file
+   */
+  async function importEnvironments(file: File, merge = true): Promise<{ 
+    success: boolean
+    error?: string
+    count?: number 
+  }> {
+    try {
+      const content = await file.text()
+      const data = JSON.parse(content)
+
+      // Check if this is an environment export
+      if (data.environments && Array.isArray(data.environments)) {
+        const environments = data.environments as Environment[]
+        
+        if (!merge) {
+          // Replace mode: reset and import all
+          envStore.reset()
+        }
+        
+        let importedCount = 0
+        for (const env of environments) {
+          if (merge) {
+            // Merge mode: skip existing environments by name
+            const existing = envStore.environments.find(e => e.name === env.name)
+            if (!existing) {
+              envStore.createEnvironment(env.name, env.variables)
+              importedCount++
+            }
+          } else {
+            // Replace mode: create all (except default which was created by reset)
+            if (!env.isDefault) {
+              envStore.createEnvironment(env.name, env.variables)
+            } else {
+              // Update default environment variables
+              const defaultEnv = envStore.environments.find(e => e.isDefault)
+              if (defaultEnv) {
+                envStore.updateEnvironment(defaultEnv.id, { variables: env.variables })
+              }
+            }
+            importedCount++
+          }
+        }
+        
+        // Set active environment if specified
+        if (data.activeEnvironmentId) {
+          const activeEnv = envStore.environments.find(e => e.id === data.activeEnvironmentId)
+          if (activeEnv) {
+            envStore.setActiveEnvironment(activeEnv.id)
+          }
+        }
+        
+        return { success: true, count: importedCount }
+      }
+
+      // Check if this is a collection export with environments
+      if (data.collections && data.environments) {
+        return { success: false, error: 'This file contains collections. Use "Import Collections" instead.' }
+      }
+
+      return { success: false, error: 'Invalid environment file format' }
+    } catch (error) {
+      return { 
+        success: false, 
+        error: error instanceof Error ? error.message : 'Failed to import environments' 
+      }
+    }
+  }
+
+  // ============================================
+  // Advanced Collection Export with Options
+  // ============================================
+
+  /**
+   * Get export preview data for the export modal
+   */
+  function getExportPreview(): ExportPreview {
+    const collections = collectionStore.exportCollections()
+    const secretScan = detectSecrets(collections)
+    const envState = envStore.exportState()
+    
+    return {
+      collections,
+      secretScan,
+      environments: envState.environments,
+      activeEnvironmentId: envState.activeEnvironmentId,
+    }
+  }
+
+  /**
+   * Export collections with configurable options
+   */
+  function exportCollectionsWithOptions(options: CollectionExportOptions = {}): void {
+    let collections = collectionStore.exportCollections()
+    
+    if (collections.length === 0) {
+      console.warn('No collections to export')
+      return
+    }
+
+    // Optionally redact secrets
+    if (options.redactSecrets) {
+      collections = redactSecrets(collections)
+    }
+
+    const exportData: CollectionExport = {
+      version: COLLECTION_VERSION,
+      exportedAt: new Date().toISOString(),
+      collections,
+    }
+
+    // Optionally include environments
+    if (options.includeEnvironments) {
+      const envState = envStore.exportState()
+      exportData.environments = envState.environments
+      exportData.activeEnvironmentId = envState.activeEnvironmentId
+    }
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    
+    const a = document.createElement('a')
+    a.href = url
+    const suffix = options.includeEnvironments ? '-with-env' : ''
+    a.download = `http-visualizer-collections${suffix}-${Date.now()}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  /**
+   * Scan collections for secrets without exporting
+   */
+  function scanForSecrets(): SecretScanResult {
+    const collections = collectionStore.exportCollections()
+    return detectSecrets(collections)
+  }
+
   return {
+    // Session export/import
     exportSession,
     importSession,
     exportRequest,
     exportResponse,
+    
+    // Collection export/import
     exportCollections,
     exportCollection,
     importCollections,
+    
+    // NEW: Environment export/import
+    exportEnvironments,
+    importEnvironments,
+    
+    // NEW: Advanced export with options
+    getExportPreview,
+    exportCollectionsWithOptions,
+    scanForSecrets,
   }
 }

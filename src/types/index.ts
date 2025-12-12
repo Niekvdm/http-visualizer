@@ -120,3 +120,61 @@ export interface TerminalLine {
   isTyping?: boolean
   timestamp?: number
 }
+
+// Environment Export Format (standalone environment export)
+export interface EnvironmentExport {
+  version: string
+  exportedAt: string
+  environments: Environment[]
+  activeEnvironmentId?: string | null
+}
+
+// Secret Detection Types
+export type SecretFieldType = 
+  | 'basic-password'
+  | 'bearer-token'
+  | 'api-key-value'
+  | 'oauth2-client-secret'
+  | 'oauth2-password'
+
+export interface SecretFinding {
+  /** Path to the secret, e.g., "My API > Auth Folder > Login Request" */
+  location: string
+  /** Human-readable field name, e.g., "Basic Auth Password" */
+  fieldName: string
+  /** Type of secret field */
+  fieldType: SecretFieldType
+  /** Whether the value uses {{variable}} syntax */
+  isVariable: boolean
+  /** Preview of value (first few chars) for user verification - only for hardcoded */
+  valuePreview?: string
+}
+
+export interface SecretScanResult {
+  /** Whether any hardcoded (non-variable) secrets were found */
+  hasHardcodedSecrets: boolean
+  /** Total count of secret fields scanned */
+  totalScanned: number
+  /** Count using variable references (safe) */
+  variableRefCount: number
+  /** Count with hardcoded values (risky) */
+  hardcodedCount: number
+  /** Detailed findings */
+  findings: SecretFinding[]
+}
+
+// Collection Export Options
+export interface CollectionExportOptions {
+  /** Include environment definitions in export */
+  includeEnvironments?: boolean
+  /** Replace hardcoded secrets with placeholder text */
+  redactSecrets?: boolean
+}
+
+// Export Preview (for modal display)
+export interface ExportPreview {
+  collections: import('./collection').Collection[]
+  secretScan: SecretScanResult
+  environments: Environment[]
+  activeEnvironmentId: string | null
+}
