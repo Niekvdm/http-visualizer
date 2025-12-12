@@ -316,6 +316,13 @@ function isHeaderRevealed(key: string): boolean {
                   via Extension
                 </span>
                 <span
+                  v-else-if="sentRequest?.viaProxy"
+                  class="px-1.5 py-0.5 text-[10px] rounded-sm bg-[var(--color-secondary)]/20 text-[var(--color-secondary)]"
+                  title="Request sent via Rust proxy backend (CORS bypassed)"
+                >
+                  via Proxy
+                </span>
+                <span
                   v-else
                   class="px-1.5 py-0.5 text-[10px] rounded-sm bg-[var(--color-warning)]/20 text-[var(--color-warning)]"
                   title="Request sent directly (may hit CORS)"
@@ -716,14 +723,53 @@ function isHeaderRevealed(key: string): boolean {
                       TLS / SSL
                     </span>
                   </div>
-                  <div class="p-2.5">
+                  <div class="p-2.5 space-y-2">
+                    <!-- Protocol & Cipher -->
                     <div class="flex items-center gap-2">
-                      <div class="w-7 h-7 rounded-sm bg-green-500/20 flex items-center justify-center">
+                      <div class="w-7 h-7 rounded-sm bg-green-500/20 flex items-center justify-center shrink-0">
                         <Lock class="w-4 h-4 text-green-400" />
                       </div>
-                      <div>
+                      <div class="min-w-0">
                         <div class="text-xs text-[var(--color-text)] font-medium">{{ tlsInfo.protocol || 'HTTPS' }}</div>
-                        <div class="text-[10px] text-[var(--color-text-dim)]">Secure</div>
+                        <div v-if="tlsInfo.cipher" class="text-[10px] text-[var(--color-text-dim)] truncate" :title="tlsInfo.cipher">
+                          {{ tlsInfo.cipher }}
+                        </div>
+                        <div v-else class="text-[10px] text-[var(--color-text-dim)]">Secure</div>
+                      </div>
+                    </div>
+
+                    <!-- Certificate Details -->
+                    <div v-if="tlsInfo.subject || tlsInfo.issuer" class="border-t border-[var(--color-border)] pt-2 space-y-1.5">
+                      <!-- Subject -->
+                      <div v-if="tlsInfo.subject" class="text-[10px]">
+                        <span class="text-[var(--color-text-dim)]">Subject:</span>
+                        <span class="text-[var(--color-text)] ml-1 font-mono">{{ tlsInfo.subject }}</span>
+                      </div>
+                      <!-- Issuer -->
+                      <div v-if="tlsInfo.issuer" class="text-[10px]">
+                        <span class="text-[var(--color-text-dim)]">Issuer:</span>
+                        <span class="text-[var(--color-text)] ml-1 font-mono">{{ tlsInfo.issuer }}</span>
+                      </div>
+                      <!-- Validity -->
+                      <div v-if="tlsInfo.validFrom || tlsInfo.validTo" class="text-[10px]">
+                        <span class="text-[var(--color-text-dim)]">Valid:</span>
+                        <span class="text-[var(--color-text)] ml-1 font-mono">
+                          {{ tlsInfo.validFrom ? new Date(tlsInfo.validFrom * 1000).toLocaleDateString() : '?' }}
+                          →
+                          {{ tlsInfo.validTo ? new Date(tlsInfo.validTo * 1000).toLocaleDateString() : '?' }}
+                        </span>
+                        <span
+                          v-if="tlsInfo.validTo && tlsInfo.validTo * 1000 < Date.now()"
+                          class="ml-1 text-red-400"
+                        >
+                          (Expired)
+                        </span>
+                        <span
+                          v-else-if="tlsInfo.validTo && (tlsInfo.validTo * 1000 - Date.now()) < 30 * 24 * 60 * 60 * 1000"
+                          class="ml-1 text-yellow-400"
+                        >
+                          (Expiring soon)
+                        </span>
                       </div>
                     </div>
                   </div>

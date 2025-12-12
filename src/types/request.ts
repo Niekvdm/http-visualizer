@@ -56,5 +56,6 @@ export interface SentRequest {
   headers: Record<string, string>
   body?: string
   viaExtension: boolean
+  viaProxy?: boolean
 }
 

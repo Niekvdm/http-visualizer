@@ -1,26 +1,37 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
-import { useExtensionBridge } from '@/composables/useExtensionBridge'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { useExtensionBridge, isAnyBridgeAvailable, getCurrentBridgeType } from '@/composables/useExtensionBridge'
 import ExtensionInstallModal from './ExtensionInstallModal.vue'
 import { LoaderCircle } from 'lucide-vue-next'
 
-const { isExtensionAvailable, extensionVersion, checkExtensionAvailability } = useExtensionBridge()
+const {
+  isExtensionAvailable,
+  extensionVersion,
+  isProxyBackendAvailable,
+  proxyBackendVersion,
+  checkExtensionAvailability,
+  checkProxyBackendAvailability
+} = useExtensionBridge()
 
 const showTooltip = ref(false)
 const showInstallModal = ref(false)
 const isChecking = ref(false)
 
-// Periodically check for extension availability
+// Computed status
+const bridgeType = computed(() => getCurrentBridgeType())
+const isConnected = computed(() => isAnyBridgeAvailable())
+
+// Periodically check for extension/proxy availability
 let checkInterval: ReturnType<typeof setInterval> | null = null
 
 onMounted(() => {
   // Check immediately
-  recheckExtension()
-  
+  recheckBridges()
+
   // Check every 5 seconds if not available
   checkInterval = setInterval(() => {
-    if (!isExtensionAvailable.value) {
-      checkExtensionAvailability()
+    if (!isConnected.value) {
+      recheckBridges()
     }
   }, 5000)
 })
@@ -31,16 +42,19 @@ onUnmounted(() => {
   }
 })
 
-async function recheckExtension() {
+async function recheckBridges() {
   isChecking.value = true
-  await checkExtensionAvailability()
+  await Promise.all([
+    checkExtensionAvailability(),
+    checkProxyBackendAvailability()
+  ])
   isChecking.value = false
 }
 
 function handleClick() {
-  if (isExtensionAvailable.value) {
+  if (isConnected.value) {
     // If connected, just recheck
-    recheckExtension()
+    recheckBridges()
   } else {
     // If not connected, show install modal
     showInstallModal.value = true
@@ -49,7 +63,7 @@ function handleClick() {
 </script>
 
 <template>
-  <div 
+  <div
     class="relative"
     @mouseenter="showTooltip = true"
     @mouseleave="showTooltip = false"
@@ -58,25 +72,29 @@ function handleClick() {
     <button
       class="flex items-center justify-center w-6 h-6 rounded transition-all"
       :class="[
-        isExtensionAvailable
-          ? 'hover:bg-[var(--color-primary)]/10'
+        isConnected
+          ? bridgeType === 'extension'
+            ? 'hover:bg-[var(--color-primary)]/10'
+            : 'hover:bg-[var(--color-secondary)]/10'
           : 'hover:bg-[var(--color-warning)]/10'
       ]"
       @click="handleClick"
       :disabled="isChecking"
-      :title="isExtensionAvailable ? 'Extension connected' : 'Extension not found'"
+      :title="isConnected ? `Connected via ${bridgeType}` : 'No bridge available'"
     >
       <!-- Status dot -->
-      <span 
+      <span
         v-if="!isChecking"
         class="w-2.5 h-2.5 rounded-full"
         :class="[
-          isExtensionAvailable
-            ? 'bg-[var(--color-primary)] shadow-[0_0_8px_var(--color-primary)]'
+          isConnected
+            ? bridgeType === 'extension'
+              ? 'bg-[var(--color-primary)] shadow-[0_0_8px_var(--color-primary)]'
+              : 'bg-[var(--color-secondary)] shadow-[0_0_8px_var(--color-secondary)]'
             : 'bg-[var(--color-warning)] animate-pulse'
         ]"
       />
-      
+
       <!-- Loading spinner when checking -->
       <LoaderCircle v-else class="w-3 h-3 animate-spin text-[var(--color-text-dim)]" />
     </button>
@@ -90,63 +108,99 @@ function handleClick() {
       leave-from-class="opacity-100 translate-y-0"
       leave-to-class="opacity-0 translate-y-1"
     >
-      <div 
+      <div
         v-if="showTooltip"
         class="absolute top-full left-0 mt-2 w-72 bg-[var(--color-bg-secondary)] border border-[var(--color-border)] rounded-lg shadow-xl z-50 overflow-hidden"
       >
         <!-- Header -->
-        <div 
+        <div
           class="px-3 py-2 border-b border-[var(--color-border)]"
           :class="[
-            isExtensionAvailable
-              ? 'bg-[var(--color-primary)]/5'
+            isConnected
+              ? bridgeType === 'extension'
+                ? 'bg-[var(--color-primary)]/5'
+                : 'bg-[var(--color-secondary)]/5'
               : 'bg-[var(--color-warning)]/5'
           ]"
         >
           <div class="flex items-center gap-2">
-            <span 
+            <span
               class="w-2 h-2 rounded-full"
               :class="[
-                isExtensionAvailable
-                  ? 'bg-[var(--color-primary)]'
+                isConnected
+                  ? bridgeType === 'extension'
+                    ? 'bg-[var(--color-primary)]'
+                    : 'bg-[var(--color-secondary)]'
                   : 'bg-[var(--color-warning)]'
               ]"
             />
             <span class="text-sm font-medium text-[var(--color-text)]">
-              {{ isExtensionAvailable ? 'Extension Connected' : 'Extension Not Found' }}
+              <template v-if="isExtensionAvailable">Extension Connected</template>
+              <template v-else-if="isProxyBackendAvailable">Proxy Backend Connected</template>
+              <template v-else>No Bridge Available</template>
             </span>
           </div>
           <div v-if="isExtensionAvailable && extensionVersion" class="text-xs text-[var(--color-text-dim)] mt-1">
-            Version {{ extensionVersion }}
+            Extension v{{ extensionVersion }}
+          </div>
+          <div v-else-if="isProxyBackendAvailable && proxyBackendVersion" class="text-xs text-[var(--color-text-dim)] mt-1">
+            Proxy v{{ proxyBackendVersion }}
           </div>
         </div>
 
         <!-- Content -->
         <div class="p-3">
+          <!-- Extension connected -->
           <template v-if="isExtensionAvailable">
             <p class="text-xs text-[var(--color-text-dim)] leading-relaxed">
               The HTTP Visualizer extension is active. All requests will bypass CORS restrictions.
             </p>
+            <div v-if="isProxyBackendAvailable" class="mt-2 text-[10px] text-[var(--color-text-dim)]">
+              Proxy backend also available (v{{ proxyBackendVersion }})
+            </div>
           </template>
-          
+
+          <!-- Proxy backend connected (no extension) -->
+          <template v-else-if="isProxyBackendAvailable">
+            <p class="text-xs text-[var(--color-text-dim)] leading-relaxed">
+              The Rust proxy backend is active. All requests will bypass CORS restrictions with detailed timing metrics.
+            </p>
+            <div class="mt-2 bg-[var(--color-bg-tertiary)] rounded p-2 text-xs">
+              <div class="font-medium text-[var(--color-text)] mb-1">Features:</div>
+              <ul class="text-[var(--color-text-dim)] space-y-0.5 list-disc list-inside text-[10px]">
+                <li>DNS/TCP/TLS timing breakdown</li>
+                <li>Redirect chain tracking</li>
+                <li>Server IP resolution</li>
+                <li>Compression detection</li>
+              </ul>
+            </div>
+          </template>
+
+          <!-- Neither available -->
           <template v-else>
             <p class="text-xs text-[var(--color-text-dim)] leading-relaxed mb-3">
-              Install the browser extension to bypass CORS restrictions when making API requests.
+              Install the browser extension or run the proxy backend to bypass CORS restrictions.
             </p>
-            
+
             <div class="bg-[var(--color-bg-tertiary)] rounded p-2 text-xs">
-              <div class="font-medium text-[var(--color-text)] mb-1">Quick Install:</div>
-              <ol class="text-[var(--color-text-dim)] space-y-1 list-decimal list-inside">
+              <div class="font-medium text-[var(--color-text)] mb-1">Option 1: Browser Extension</div>
+              <ol class="text-[var(--color-text-dim)] space-y-1 list-decimal list-inside text-[10px]">
                 <li>Open <code class="text-[var(--color-secondary)]">chrome://extensions</code></li>
                 <li>Enable "Developer mode"</li>
-                <li>Click "Load unpacked"</li>
-                <li>Select the <code class="text-[var(--color-secondary)]">http-visualizer-extension</code> folder</li>
+                <li>Load the extension folder</li>
               </ol>
             </div>
-            
+
+            <div class="bg-[var(--color-bg-tertiary)] rounded p-2 text-xs mt-2">
+              <div class="font-medium text-[var(--color-text)] mb-1">Option 2: Proxy Backend</div>
+              <div class="text-[var(--color-text-dim)] text-[10px]">
+                Run <code class="text-[var(--color-secondary)]">cargo run</code> in <code class="text-[var(--color-secondary)]">http-visualizer-app/</code>
+              </div>
+            </div>
+
             <button
               class="mt-3 w-full px-3 py-1.5 text-xs font-medium bg-[var(--color-primary)]/10 text-[var(--color-primary)] border border-[var(--color-primary)]/30 rounded hover:bg-[var(--color-primary)]/20 transition-colors"
-              @click="recheckExtension"
+              @click="recheckBridges"
             >
               Check Again
             </button>
@@ -156,7 +210,7 @@ function handleClick() {
     </Transition>
 
     <!-- Install Modal -->
-    <ExtensionInstallModal 
+    <ExtensionInstallModal
       :show="showInstallModal"
       @close="showInstallModal = false"
     />

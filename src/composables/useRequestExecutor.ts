@@ -4,7 +4,7 @@ import { useAuthStore } from '@/stores/authStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useAuthService } from '@/composables/useAuthService'
-import { useExtensionBridge, type ExtensionResponse } from '@/composables/useExtensionBridge'
+import { useExtensionBridge, type ExtensionResponse, isAnyBridgeAvailable, getCurrentBridgeType } from '@/composables/useExtensionBridge'
 import { resolveVariables, mergeVariables } from '@/utils/variableResolver'
 import { requestLogger } from '@/utils/authLogger'
 import type { ParsedRequest, ExecutionResponse, ExecutionError, HttpAuth, HttpHeader, SentRequest } from '@/types'
@@ -15,7 +15,7 @@ export function useRequestExecutor() {
   const envStore = useEnvironmentStore()
   const collectionStore = useCollectionStore()
   const authService = useAuthService()
-  const { isExtensionAvailable, executeViaExtension } = useExtensionBridge()
+  const { isExtensionAvailable, isProxyBackendAvailable, executeViaExtension, executeViaProxy } = useExtensionBridge()
   const isExecuting = ref(false)
   const funnyTextInterval = ref<ReturnType<typeof setInterval> | null>(null)
 
@@ -109,38 +109,51 @@ export function useRequestExecutor() {
       const headersObj = headersToObject(fetchOptions.headers as Headers)
       requestLogger.debug('Request headers', { headers: Object.keys(headersObj) })
       
+      // Determine which bridge to use
+      const bridgeType = getCurrentBridgeType()
+
       // Store the sent request details for visualization
       const sentRequest: SentRequest = {
         method: request.method,
         url,
         headers: headersObj,
         body: fetchOptions.body as string | undefined,
-        viaExtension: isExtensionAvailable.value,
+        viaExtension: bridgeType === 'extension',
+        viaProxy: bridgeType === 'proxy',
       }
       requestStore.executionState.sentRequest = sentRequest
 
-      // Try to use extension for CORS bypass, fall back to direct fetch
-      if (isExtensionAvailable.value) {
-        requestLogger.info('Executing via extension (CORS bypass)')
-        // Execute via extension (bypasses CORS)
-        const extResponse = await executeViaExtension({
-          method: request.method,
-          url,
-          headers: headersObj,
-          body: fetchOptions.body as string | undefined,
-        })
+      // Try to use extension or proxy for CORS bypass, fall back to direct fetch
+      if (bridgeType === 'extension' || bridgeType === 'proxy') {
+        const isUsingExtension = bridgeType === 'extension'
+        requestLogger.info(`Executing via ${bridgeType} (CORS bypass)`)
+
+        // Execute via extension or proxy (both bypass CORS)
+        const bridgeResponse = isUsingExtension
+          ? await executeViaExtension({
+              method: request.method,
+              url,
+              headers: headersObj,
+              body: fetchOptions.body as string | undefined,
+            })
+          : await executeViaProxy({
+              method: request.method,
+              url,
+              headers: headersObj,
+              body: fetchOptions.body as string | undefined,
+            })
 
         const endTime = performance.now()
         const duration = endTime - startTime
 
-        if (!extResponse.success || !extResponse.data) {
-          requestLogger.error('Extension request failed', extResponse.error)
-          throw new Error(extResponse.error?.message || 'Extension request failed')
+        if (!bridgeResponse.success || !bridgeResponse.data) {
+          requestLogger.error(`${bridgeType} request failed`, bridgeResponse.error)
+          throw new Error(bridgeResponse.error?.message || `${bridgeType} request failed`)
         }
 
-        const { data } = extResponse
+        const { data } = bridgeResponse
         let bodyParsed: unknown = null
-        
+
         try {
           bodyParsed = JSON.parse(data.body)
         } catch {
@@ -155,7 +168,7 @@ export function useRequestExecutor() {
           body: data.body,
           bodyParsed,
           size: data.size,
-          // Use extension's detailed timing if available, fallback to measured duration
+          // Use bridge's detailed timing if available, fallback to measured duration
           timing: {
             total: data.timing?.total ?? duration,
             dns: data.timing?.dns,
@@ -165,13 +178,13 @@ export function useRequestExecutor() {
             download: data.timing?.download,
             blocked: data.timing?.blocked,
           },
-          // Additional extension data
+          // Additional bridge data
           url: data.url,
           redirected: data.redirected,
           redirectChain: data.redirectChain,
           tls: data.tls,
           sizeBreakdown: data.sizeBreakdown,
-          // Network/server info from webRequest API
+          // Network/server info
           serverIP: data.serverIP,
           protocol: data.protocol,
           fromCache: data.fromCache,
@@ -184,14 +197,14 @@ export function useRequestExecutor() {
         // Direct fetch (may hit CORS)
         requestLogger.info('Executing via direct fetch')
         const response = await fetch(url, fetchOptions)
-        
+
         const endTime = performance.now()
         const duration = endTime - startTime
 
         // Read response body
         const bodyText = await response.text()
         let bodyParsed: unknown = null
-        
+
         try {
           bodyParsed = JSON.parse(bodyText)
         } catch {

@@ -1,14 +1,19 @@
 /**
  * Extension Bridge Composable
- * 
+ *
  * Handles communication with the HTTP Visualizer browser extension
- * for bypassing CORS restrictions.
+ * for bypassing CORS restrictions. Also supports a Rust proxy backend
+ * as an alternative when the extension is not available.
  */
 
 import { ref, readonly, onMounted, onUnmounted } from 'vue'
 
 // Extension identifier (must match content.js)
 const EXTENSION_ID = 'http-visualizer-extension'
+
+// Proxy backend state
+let isProxyBackendAvailable = ref(false)
+let proxyBackendVersion = ref<string | null>(null)
 
 // Message types
 const MESSAGE_TYPES = {
@@ -126,9 +131,10 @@ function initExtensionBridge() {
   // Listen for extension ready message
   window.addEventListener('message', handleMessage)
 
-  // Also check periodically for extension
+  // Check for extension and proxy backend in parallel
   checkExtensionAvailability()
-  
+  checkProxyBackendAvailability()
+
   isInitialized = true
 }
 
@@ -201,7 +207,7 @@ async function checkExtensionAvailability(): Promise<boolean> {
     const handler = (event: MessageEvent) => {
       if (event.source !== window) return
       if (!event.data || event.data.source !== EXTENSION_ID) return
-      
+
       if (event.data.type === `${MESSAGE_TYPES.PING}_RESPONSE`) {
         clearTimeout(timeout)
         window.removeEventListener('message', handler)
@@ -214,6 +220,57 @@ async function checkExtensionAvailability(): Promise<boolean> {
     window.addEventListener('message', handler)
     sendToExtension(MESSAGE_TYPES.PING, {})
   })
+}
+
+/**
+ * Check if the Rust proxy backend is available
+ */
+async function checkProxyBackendAvailability(): Promise<boolean> {
+  try {
+    const response = await fetch('/api/health', {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+    })
+    if (response.ok) {
+      const data = await response.json()
+      isProxyBackendAvailable.value = true
+      proxyBackendVersion.value = data.version || '1.0.0'
+      console.log('[HTTP Visualizer] Proxy backend detected, version:', proxyBackendVersion.value)
+      return true
+    }
+  } catch {
+    // Backend not available
+  }
+  isProxyBackendAvailable.value = false
+  return false
+}
+
+/**
+ * Execute an HTTP request through the proxy backend
+ */
+async function executeViaProxy(options: {
+  method: string
+  url: string
+  headers?: Record<string, string>
+  body?: string
+  timeout?: number
+}): Promise<ExtensionResponse> {
+  const response = await fetch('/api/proxy', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      method: options.method,
+      url: options.url,
+      headers: options.headers || {},
+      body: options.body,
+      timeout: options.timeout || 30000,
+    }),
+  })
+
+  const result = await response.json()
+  return result as ExtensionResponse
 }
 
 /**
@@ -280,10 +337,14 @@ export function useExtensionBridge() {
     // State (readonly to prevent external mutation)
     isExtensionAvailable: readonly(isExtensionAvailable),
     extensionVersion: readonly(extensionVersion),
-    
+    isProxyBackendAvailable: readonly(isProxyBackendAvailable),
+    proxyBackendVersion: readonly(proxyBackendVersion),
+
     // Methods
     checkExtensionAvailability,
+    checkProxyBackendAvailability,
     executeViaExtension,
+    executeViaProxy,
   }
 }
 
@@ -296,7 +357,8 @@ export function isExtensionInstalled(): boolean {
 }
 
 /**
- * Execute request via extension (non-composable version)
+ * Execute request via extension or proxy backend (non-composable version)
+ * Falls back to proxy backend if extension is not available
  */
 export async function executeRequestViaExtension(options: {
   method: string
@@ -307,12 +369,43 @@ export async function executeRequestViaExtension(options: {
 }): Promise<ExtensionResponse> {
   // Ensure bridge is initialized
   initExtensionBridge()
-  
+
   // Wait a bit for extension detection if not yet available
   if (!isExtensionAvailable.value) {
     await checkExtensionAvailability()
   }
-  
-  return executeViaExtension(options)
+
+  // Try extension first
+  if (isExtensionAvailable.value) {
+    return executeViaExtension(options)
+  }
+
+  // Fall back to proxy backend
+  if (!isProxyBackendAvailable.value) {
+    await checkProxyBackendAvailability()
+  }
+
+  if (isProxyBackendAvailable.value) {
+    return executeViaProxy(options)
+  }
+
+  // Neither available
+  throw new Error('Neither extension nor proxy backend available')
+}
+
+/**
+ * Check if any execution method is available (extension or proxy)
+ */
+export function isAnyBridgeAvailable(): boolean {
+  return isExtensionAvailable.value || isProxyBackendAvailable.value
+}
+
+/**
+ * Get the current bridge type being used
+ */
+export function getCurrentBridgeType(): 'extension' | 'proxy' | null {
+  if (isExtensionAvailable.value) return 'extension'
+  if (isProxyBackendAvailable.value) return 'proxy'
+  return null
 }
 
