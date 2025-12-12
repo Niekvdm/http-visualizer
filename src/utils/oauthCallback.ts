@@ -240,8 +240,9 @@ export function handleErrorCallback(result: OAuthCallbackResult): void {
  */
 export function renderCallbackPage(status: 'loading' | 'success' | 'error', message?: string): void {
   const styles = `
+    @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
     body {
-      font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+      font-family: 'Fira Code', 'Consolas', monospace;
       background: #0a0a0a;
       color: #00ff41;
       display: flex;

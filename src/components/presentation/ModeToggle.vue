@@ -43,7 +43,7 @@ function setMode(newMode: PresentationMode) {
   background: transparent;
   border: none;
   color: var(--color-text-dim);
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
   font-size: 11px;
   letter-spacing: 1px;
   padding: 4px 8px;
@@ -72,7 +72,7 @@ function setMode(newMode: PresentationMode) {
   background: transparent;
   border: none;
   color: var(--color-text-dim);
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
   padding: 8px 12px;
   cursor: pointer;
   text-align: left;

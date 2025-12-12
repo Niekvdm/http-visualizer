@@ -151,6 +151,7 @@ export function useRequestExecutor() {
           status: data.status,
           statusText: data.statusText,
           headers: data.headers,
+          requestHeaders: data.requestHeaders,
           body: data.body,
           bodyParsed,
           size: data.size,
@@ -170,6 +171,14 @@ export function useRequestExecutor() {
           redirectChain: data.redirectChain,
           tls: data.tls,
           sizeBreakdown: data.sizeBreakdown,
+          // Network/server info from webRequest API
+          serverIP: data.serverIP,
+          protocol: data.protocol,
+          fromCache: data.fromCache,
+          resourceType: data.resourceType,
+          requestBodySize: data.requestBodySize,
+          connection: data.connection,
+          serverSoftware: data.serverSoftware,
         }
       } else {
         // Direct fetch (may hit CORS)

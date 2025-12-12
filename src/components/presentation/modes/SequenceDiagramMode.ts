@@ -119,6 +119,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
   private errorShakeOffset: number = 0
   private errorBurstProgress: number = 0
   private isErrorAnimating: boolean = false
+  private errorBurstPending: boolean = false  // Wait for error arrow to complete before bursting
 
   // Connection badges
   private badgesGraphics: Graphics | null = null
@@ -506,7 +507,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     if (!this.errorBurstGraphics) return
     this.errorBurstGraphics.clear()
 
-    if (this.state !== 'error' || !this.isErrorAnimating) return
+    if (this.state !== 'error') return
 
     // Find the error arrow
     const errorArrow = this.arrows.find(a => a.type === 'response' && a.progress >= 1)
@@ -515,25 +516,45 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     const centerX = (errorArrow.fromX + errorArrow.toX) / 2
     const centerY = errorArrow.y
 
-    // Draw burst animation (expanding circles and X)
-    const burstRadius = 20 + this.errorBurstProgress * 30
-    const burstAlpha = Math.max(0, 1 - this.errorBurstProgress)
+    // Draw animated burst effects only while animating
+    if (this.isErrorAnimating) {
+      const burstAlpha = Math.max(0, 1 - this.errorBurstProgress)
 
-    // Outer expanding rings
-    for (let i = 0; i < 3; i++) {
-      const ringProgress = Math.max(0, this.errorBurstProgress - i * 0.15)
-      const ringRadius = 10 + ringProgress * 50
-      const ringAlpha = Math.max(0, 0.5 - ringProgress * 0.5)
+      // Outer expanding rings
+      for (let i = 0; i < 3; i++) {
+        const ringProgress = Math.max(0, this.errorBurstProgress - i * 0.15)
+        const ringRadius = 10 + ringProgress * 50
+        const ringAlpha = Math.max(0, 0.5 - ringProgress * 0.5)
 
-      if (ringAlpha > 0) {
-        this.errorBurstGraphics.circle(centerX, centerY, ringRadius)
-        this.errorBurstGraphics.stroke({ color: this.options.errorColor, width: 2, alpha: ringAlpha })
+        if (ringAlpha > 0) {
+          this.errorBurstGraphics.circle(centerX, centerY, ringRadius)
+          this.errorBurstGraphics.stroke({ color: this.options.errorColor, width: 2, alpha: ringAlpha })
+        }
+      }
+
+      // Particle burst effect
+      if (this.errorBurstProgress < 0.8) {
+        const particleCount = 8
+        for (let i = 0; i < particleCount; i++) {
+          const angle = (i / particleCount) * Math.PI * 2
+          const distance = this.errorBurstProgress * 60
+          const particleX = centerX + Math.cos(angle) * distance
+          const particleY = centerY + Math.sin(angle) * distance
+          const particleAlpha = Math.max(0, 1 - this.errorBurstProgress * 1.5)
+          const particleSize = 3 * (1 - this.errorBurstProgress)
+
+          this.errorBurstGraphics.circle(particleX, particleY, particleSize)
+          this.errorBurstGraphics.fill({ color: this.options.errorColor, alpha: particleAlpha })
+        }
       }
     }
 
-    // X mark with animation
-    if (this.errorBurstProgress > 0.2) {
-      const xProgress = Math.min(1, (this.errorBurstProgress - 0.2) * 2)
+    // X mark - always show when in error state (animate in, then persist)
+    const xProgress = this.isErrorAnimating
+      ? Math.min(1, Math.max(0, this.errorBurstProgress - 0.2) * 2)
+      : 1
+
+    if (xProgress > 0) {
       const xSize = 12 * xProgress
       const xAlpha = Math.min(1, xProgress * 2)
 
@@ -546,25 +567,12 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
       this.errorBurstGraphics.lineTo(centerX - xSize, centerY + xSize)
       this.errorBurstGraphics.stroke({ color: this.options.errorColor, width: 3, alpha: xAlpha })
 
-      // X glow
+      // Subtle glow behind X (fades during animation, stays subtle after)
+      const glowAlpha = this.isErrorAnimating
+        ? Math.max(0.1, 0.3 - this.errorBurstProgress * 0.2)
+        : 0.1
       this.errorBurstGraphics.circle(centerX, centerY, xSize + 5)
-      this.errorBurstGraphics.fill({ color: this.options.errorColor, alpha: burstAlpha * 0.2 })
-    }
-
-    // Particle burst effect
-    if (this.errorBurstProgress < 0.8) {
-      const particleCount = 8
-      for (let i = 0; i < particleCount; i++) {
-        const angle = (i / particleCount) * Math.PI * 2
-        const distance = this.errorBurstProgress * 60
-        const particleX = centerX + Math.cos(angle) * distance
-        const particleY = centerY + Math.sin(angle) * distance
-        const particleAlpha = Math.max(0, 1 - this.errorBurstProgress * 1.5)
-        const particleSize = 3 * (1 - this.errorBurstProgress)
-
-        this.errorBurstGraphics.circle(particleX, particleY, particleSize)
-        this.errorBurstGraphics.fill({ color: this.options.errorColor, alpha: particleAlpha })
-      }
+      this.errorBurstGraphics.fill({ color: this.options.errorColor, alpha: glowAlpha })
     }
   }
 
@@ -599,6 +607,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
 
   private resetErrorAnimation() {
     this.isErrorAnimating = false
+    this.errorBurstPending = false
     this.errorBurstProgress = 0
     this.errorShakeOffset = 0
   }
@@ -959,6 +968,12 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
 
         if (arrow.progress >= 1) {
           arrow.isAnimating = false
+
+          // Trigger error burst when error response arrow completes
+          if (this.errorBurstPending && this.state === 'error' && arrow.type === 'response') {
+            this.errorBurstPending = false
+            this.triggerErrorAnimation()
+          }
         }
       }
 
@@ -1122,10 +1137,20 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
         break
 
       case 'fetching':
+        // If coming from a terminal state (not authenticating), clear everything for fresh start
+        if (this.state !== 'authenticating') {
+          this.clearArrows()
+          this.clearActivationBoxes()
+          this.clearTimingBars()
+          this.resetErrorAnimation()
+          this.responseData = null
+          this.errorMessage = null
+        }
+
         this.state = 'fetching'
         this.animationTime = 0
 
-        // Speed up any incomplete arrows from previous phase
+        // Speed up any incomplete arrows from previous phase (only relevant when coming from authenticating)
         this.speedUpIncompleteArrows()
 
         // Deactivate auth box if present
@@ -1221,8 +1246,8 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     // Speed up any incomplete arrows from previous phase
     this.speedUpIncompleteArrows()
 
-    // Trigger error animation effects
-    this.triggerErrorAnimation()
+    // Mark error burst as pending - will trigger when error arrow completes
+    this.errorBurstPending = true
 
     // Add error response arrow
     if (this.serverLifeline && this.clientLifeline) {

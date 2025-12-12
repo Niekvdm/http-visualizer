@@ -37,6 +37,10 @@ export interface ExtensionRedirectHop {
   status: number
   duration: number
   headers?: Record<string, string>
+  /** Whether this was an opaque redirect (cross-origin) */
+  opaque?: boolean
+  /** Additional info about this hop */
+  message?: string
 }
 
 // TLS info from extension
@@ -69,6 +73,8 @@ export interface ExtensionResponse {
     status: number
     statusText: string
     headers: Record<string, string>
+    /** Request headers that were actually sent (captured via webRequest API) */
+    requestHeaders?: Record<string, string>
     body: string
     bodyBase64?: string | null
     isBinary: boolean
@@ -79,6 +85,20 @@ export interface ExtensionResponse {
     redirectChain?: ExtensionRedirectHop[]
     tls?: ExtensionTlsInfo
     sizeBreakdown?: ExtensionSizeBreakdown
+    /** Server IP address */
+    serverIP?: string
+    /** HTTP protocol version (HTTP/1.1, HTTP/2) */
+    protocol?: string
+    /** Whether response was served from cache */
+    fromCache?: boolean
+    /** Resource type (xmlhttprequest, fetch, etc.) */
+    resourceType?: string
+    /** Size of request body in bytes */
+    requestBodySize?: number
+    /** Connection type (keep-alive, close) */
+    connection?: string
+    /** Server software from headers */
+    serverSoftware?: string
   }
   error?: {
     message: string

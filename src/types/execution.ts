@@ -31,12 +31,16 @@ export interface ResponseTiming {
 export interface RedirectHop {
   /** URL of hop */
   url: string
-  /** HTTP status code (301, 302, 307, 308) */
+  /** HTTP status code (301, 302, 307, 308), 0 for opaque */
   status: number
   /** Time for this hop in ms */
   duration: number
   /** Response headers from this hop */
   headers?: Record<string, string>
+  /** Whether this was an opaque redirect (cross-origin) */
+  opaque?: boolean
+  /** Additional info about this hop (e.g., for grouped cross-origin redirects) */
+  message?: string
 }
 
 // TLS/SSL information
@@ -80,6 +84,8 @@ export interface ExecutionResponse {
   status: number
   statusText: string
   headers: Record<string, string>
+  /** Request headers that were actually sent (captured via webRequest API) */
+  requestHeaders?: Record<string, string>
   body: string
   bodyParsed?: unknown
   size: number
@@ -94,6 +100,20 @@ export interface ExecutionResponse {
   tls?: TlsInfo
   /** Detailed size breakdown */
   sizeBreakdown?: SizeBreakdown
+  /** Server IP address */
+  serverIP?: string
+  /** HTTP protocol version (HTTP/1.1, HTTP/2) */
+  protocol?: string
+  /** Whether response was served from cache */
+  fromCache?: boolean
+  /** Resource type (xmlhttprequest, fetch, etc.) */
+  resourceType?: string
+  /** Size of request body in bytes */
+  requestBodySize?: number
+  /** Connection type (keep-alive, close) */
+  connection?: string
+  /** Server software from headers */
+  serverSoftware?: string
 }
 
 // Execution Error

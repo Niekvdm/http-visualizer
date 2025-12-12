@@ -403,7 +403,7 @@ const basicPreview = computed(() => {
         <button
           v-for="type in authTypes"
           :key="type.value"
-          class="px-2 py-1 text-[10px] font-mono uppercase rounded transition-colors"
+          class="px-2 py-1 text-xs font-mono uppercase rounded transition-colors"
           :class="[
             selectedType === type.value
               ? 'bg-[var(--color-primary)] text-[var(--color-bg)]'
@@ -476,7 +476,7 @@ const basicPreview = computed(() => {
           </button>
         </div>
       </div>
-      <div class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
+      <div class="text-xs text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
         <span class="font-bold">Preview:</span>
         <code class="ml-1 text-[var(--color-secondary)]">Authorization: Basic {{ basicPreview }}</code>
       </div>
@@ -507,7 +507,7 @@ const basicPreview = computed(() => {
           </button>
         </div>
       </div>
-      <div class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
+      <div class="text-xs text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
         <span class="font-bold">Preview:</span>
         <code class="ml-1 text-[var(--color-secondary)] break-all">
           Authorization: Bearer {{ localAuth.bearer.token ? localAuth.bearer.token.slice(0, 30) + (localAuth.bearer.token.length > 30 ? '...' : '') : '(empty)' }}
@@ -578,7 +578,7 @@ const basicPreview = computed(() => {
           </label>
         </div>
       </div>
-      <div class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
+      <div class="text-xs text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
         <span class="font-bold">Preview:</span>
         <code class="ml-1 text-[var(--color-secondary)]">
           <template v-if="localAuth.apiKey.in === 'header'">
@@ -770,13 +770,13 @@ const basicPreview = computed(() => {
       </div>
 
       <!-- Token status -->
-      <div v-if="hasToken" class="text-[10px] bg-[var(--color-bg-tertiary)] p-3 rounded">
+      <div v-if="hasToken" class="text-xs bg-[var(--color-bg-tertiary)] p-3 rounded">
         <div class="flex items-center justify-between mb-2">
           <span class="text-[var(--color-primary)] font-bold flex items-center gap-1">
             <Check class="w-3 h-3" /> Token Cached
           </span>
           <button 
-            class="text-[var(--color-error)] hover:underline text-[10px]"
+            class="text-[var(--color-error)] hover:underline text-xs"
             @click="clearToken"
           >
             Clear
@@ -790,7 +790,7 @@ const basicPreview = computed(() => {
       </div>
 
       <!-- Note for non-interactive flows -->
-      <div v-if="!needsAuthorizationUrl" class="text-[10px] text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
+      <div v-if="!needsAuthorizationUrl" class="text-xs text-[var(--color-text-dim)] bg-[var(--color-bg-tertiary)] p-2 rounded">
         <span class="font-bold">Note:</span>
         <span class="ml-1">Token will be fetched automatically before request execution.</span>
       </div>

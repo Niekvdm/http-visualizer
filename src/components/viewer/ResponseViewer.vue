@@ -5,7 +5,7 @@ import { formatBytes, formatDuration, getStatusColor } from '@/utils/formatters'
 import JsonTreeView from './JsonTreeView.vue'
 import RawView from './RawView.vue'
 import TableView from './TableView.vue'
-import { AlertTriangle, RefreshCw, Bomb, Radio, Lock, Unlock, ChevronDown, Clock, ArrowRight, Shield, FileText } from 'lucide-vue-next'
+import { AlertTriangle, RefreshCw, Bomb, Radio, Lock, Unlock, ChevronDown, Clock, ArrowRight, Shield, FileText, Server, Globe, Zap, Database, Wifi } from 'lucide-vue-next'
 
 type ViewTab = 'request' | 'json' | 'raw' | 'table' | 'headers' | 'timing'
 
@@ -51,7 +51,7 @@ const timing = computed(() => response.value?.timing)
 const hasDetailedTiming = computed(() => {
   const t = timing.value
   if (!t) return false
-  return t.dns !== undefined || t.tcp !== undefined || t.tls !== undefined || t.ttfb !== undefined || t.download !== undefined
+  return t.dns !== undefined || t.tcp !== undefined || t.tls !== undefined || t.ttfb !== undefined || t.download !== undefined || t.blocked !== undefined
 })
 
 // Redirect chain
@@ -64,6 +64,20 @@ const hasSizeBreakdown = computed(() => sizeBreakdown.value !== undefined)
 
 // TLS info
 const tlsInfo = computed(() => response.value?.tls)
+
+// Network info from webRequest API
+const serverIP = computed(() => response.value?.serverIP)
+const protocol = computed(() => response.value?.protocol)
+const fromCache = computed(() => response.value?.fromCache)
+const connectionType = computed(() => response.value?.connection)
+const serverSoftware = computed(() => response.value?.serverSoftware)
+const resourceType = computed(() => response.value?.resourceType)
+const requestBodySizeFromExtension = computed(() => response.value?.requestBodySize)
+
+// Check if we have any network info to display
+const hasNetworkInfo = computed(() => {
+  return serverIP.value || protocol.value || fromCache.value || connectionType.value || serverSoftware.value
+})
 
 const requestHeadersArray = computed(() => {
   if (!sentRequest.value?.headers) return []
@@ -180,9 +194,31 @@ function isHeaderRevealed(key: string): boolean {
       </div>
 
       <!-- Response info -->
-      <div v-if="hasResponse" class="flex items-center gap-4 text-xs font-mono">
+      <div v-if="hasResponse" class="flex items-center gap-3 text-xs font-mono">
         <span :class="statusClass" class="font-bold">
           {{ response?.status }} {{ response?.statusText }}
+        </span>
+        <!-- Protocol badge -->
+        <span
+          v-if="protocol"
+          class="px-1.5 py-0.5 rounded text-[10px]"
+          :class="protocol === 'HTTP/2' ? 'bg-green-500/20 text-green-400' : 'bg-[var(--color-bg)] text-[var(--color-text-dim)]'"
+        >
+          {{ protocol }}
+        </span>
+        <!-- Cache badge -->
+        <span
+          v-if="fromCache"
+          class="px-1.5 py-0.5 rounded text-[10px] bg-blue-500/20 text-blue-400"
+        >
+          cached
+        </span>
+        <!-- Redirects badge -->
+        <span
+          v-if="hasRedirects"
+          class="px-1.5 py-0.5 rounded text-[10px] bg-orange-500/20 text-orange-400"
+        >
+          {{ redirectChain.length }} redirect{{ redirectChain.length > 1 ? 's' : '' }}
         </span>
         <span class="text-[var(--color-text-dim)]">
           {{ formatBytes(response?.size || 0) }}
@@ -429,6 +465,17 @@ function isHeaderRevealed(key: string): boolean {
                 <div class="p-4">
                   <template v-if="hasDetailedTiming && timing">
                     <div class="space-y-3">
+                      <!-- Blocked -->
+                      <div v-if="timing.blocked !== undefined && timing.blocked > 0" class="flex items-center gap-3">
+                        <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">Blocked</span>
+                        <div class="flex-1 h-5 bg-[var(--color-bg)] rounded overflow-hidden">
+                          <div
+                            class="h-full bg-gray-500/80 rounded"
+                            :style="{ width: `${Math.max(2, (timing.blocked / timing.total) * 100)}%` }"
+                          />
+                        </div>
+                        <span class="w-16 text-right text-xs text-[var(--color-text)] font-mono">{{ timing.blocked.toFixed(0) }}ms</span>
+                      </div>
                       <!-- DNS -->
                       <div v-if="timing.dns !== undefined" class="flex items-center gap-3">
                         <span class="w-20 text-xs text-[var(--color-text-dim)] font-mono">DNS</span>
@@ -507,6 +554,75 @@ function isHeaderRevealed(key: string): boolean {
                 </div>
               </div>
 
+              <!-- Network Info -->
+              <div v-if="hasNetworkInfo" class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
+                <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
+                  <Globe class="w-4 h-4 text-[var(--color-secondary)]" />
+                  <span class="text-xs font-bold text-[var(--color-text-dim)] uppercase tracking-wider">
+                    Network Info
+                  </span>
+                </div>
+                <div class="p-4">
+                  <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <!-- Server IP -->
+                    <div v-if="serverIP" class="flex items-start gap-2">
+                      <Server class="w-4 h-4 text-[var(--color-text-dim)] mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Server IP</div>
+                        <div class="text-sm font-mono text-[var(--color-text)]">{{ serverIP }}</div>
+                      </div>
+                    </div>
+
+                    <!-- Protocol -->
+                    <div v-if="protocol" class="flex items-start gap-2">
+                      <Zap class="w-4 h-4 text-[var(--color-text-dim)] mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Protocol</div>
+                        <div class="text-sm font-mono" :class="protocol === 'HTTP/2' ? 'text-green-400' : 'text-[var(--color-text)]'">
+                          {{ protocol }}
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- From Cache -->
+                    <div v-if="fromCache" class="flex items-start gap-2">
+                      <Database class="w-4 h-4 text-green-400 mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Cache</div>
+                        <div class="text-sm font-mono text-green-400">From Cache</div>
+                      </div>
+                    </div>
+
+                    <!-- Connection Type -->
+                    <div v-if="connectionType" class="flex items-start gap-2">
+                      <Wifi class="w-4 h-4 text-[var(--color-text-dim)] mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Connection</div>
+                        <div class="text-sm font-mono text-[var(--color-text)]">{{ connectionType }}</div>
+                      </div>
+                    </div>
+
+                    <!-- Server Software -->
+                    <div v-if="serverSoftware" class="flex items-start gap-2">
+                      <Server class="w-4 h-4 text-[var(--color-text-dim)] mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Server</div>
+                        <div class="text-sm font-mono text-[var(--color-text)]">{{ serverSoftware }}</div>
+                      </div>
+                    </div>
+
+                    <!-- Resource Type -->
+                    <div v-if="resourceType" class="flex items-start gap-2">
+                      <FileText class="w-4 h-4 text-[var(--color-text-dim)] mt-0.5 shrink-0" />
+                      <div>
+                        <div class="text-xs text-[var(--color-text-dim)]">Type</div>
+                        <div class="text-sm font-mono text-[var(--color-text)]">{{ resourceType }}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <!-- Redirect Chain -->
               <div v-if="hasRedirects" class="bg-[var(--color-bg-tertiary)] rounded-lg border border-[var(--color-border)]">
                 <div class="px-4 py-2 border-b border-[var(--color-border)] flex items-center gap-2">
@@ -561,21 +677,26 @@ function isHeaderRevealed(key: string): boolean {
                 </div>
                 <div class="p-4">
                   <template v-if="hasSizeBreakdown && sizeBreakdown">
-                    <div class="grid grid-cols-2 gap-4">
+                    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+                      <!-- Request Body Size (if available from extension) -->
+                      <div v-if="requestBodySizeFromExtension">
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Request Body</div>
+                        <div class="text-lg font-mono text-[var(--color-secondary)]">{{ formatBytes(requestBodySizeFromExtension) }}</div>
+                      </div>
                       <div>
-                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Headers</div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Response Headers</div>
                         <div class="text-lg font-mono text-[var(--color-text)]">{{ formatBytes(sizeBreakdown.headers) }}</div>
                       </div>
                       <div>
-                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Body</div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Response Body</div>
                         <div class="text-lg font-mono text-[var(--color-text)]">{{ formatBytes(sizeBreakdown.body) }}</div>
                       </div>
                       <div>
-                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Total</div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Total Response</div>
                         <div class="text-lg font-mono text-[var(--color-primary)] font-bold">{{ formatBytes(sizeBreakdown.total) }}</div>
                       </div>
                       <div v-if="sizeBreakdown.encoding && sizeBreakdown.encoding !== 'identity'">
-                        <div class="text-xs text-[var(--color-text-dim)] mb-1"></div>
+                        <div class="text-xs text-[var(--color-text-dim)] mb-1">Compression</div>
                         <div class="flex items-center gap-2">
                           <span class="text-lg font-mono text-green-400">{{ sizeBreakdown.encoding.toUpperCase() }}</span>
                           <span v-if="sizeBreakdown.compressionRatio" class="text-xs text-green-400">

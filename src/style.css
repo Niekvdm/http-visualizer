@@ -1,6 +1,18 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Fira+Code:wght@400;500;600&display=swap');
 @import "tailwindcss";
 
+/* Tailwind Theme - Typography */
+@theme {
+  --font-sans: 'Share Tech Mono', monospace;
+  --font-mono: 'Fira Code', monospace;
+
+  /* Override Tailwind font sizes - change these values to adjust globally */
+  --text-xs: 0.75rem;      /* 12px - sidebar items, labels */
+  --text-sm: 0.875rem;     /* 14px - editor content, modals */
+  --text-base: 1rem;       /* 16px - base size */
+  --text-lg: 1.125rem;     /* 18px - large headings */
+}
+
 /* CSS Variables for theming */
 :root {
   /* Matrix/Hacker Theme (default) */
@@ -16,10 +28,20 @@
   --color-text-dim: #6b8f6b;
   --color-border: #00ff4133;
   --color-glow: #00ff4180;
-  
+
+  /* Typography */
   --font-display: 'Share Tech Mono', monospace;
   --font-code: 'Fira Code', monospace;
 }
+
+/* ============================================
+   TYPOGRAPHY SCALE
+
+   Tailwind classes used:
+   - text-sm  = 14px (item names, body text)
+   - text-xs  = 12px (secondary text, badges, captions)
+   - text-[11px] = 11px (small badges)
+   ============================================ */
 
 /* Base styles */
 * {
@@ -85,7 +107,7 @@ body {
 .method-badge {
   font-family: var(--font-code);
   font-weight: 700;
-  font-size: 0.625rem;
+  font-size: 0.75rem;  /* 12px */
   padding: 0.125rem 0.375rem;
   border-radius: 0.25rem;
   text-transform: uppercase;
@@ -237,7 +259,7 @@ body {
   display: inline-flex;
   align-items: center;
   padding: 0.125rem 0.25rem;
-  font-size: 0.5625rem;
+  font-size: 0.6875rem;  /* 11px */
   font-weight: 500;
   border-radius: 0.25rem;
   background-color: rgba(255, 184, 0, 0.2);

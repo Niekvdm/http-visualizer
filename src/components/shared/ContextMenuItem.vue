@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { inject } from 'vue'
 
 const props = withDefaults(defineProps<{
   /** Whether this is a danger/destructive action */
@@ -8,18 +8,28 @@ const props = withDefaults(defineProps<{
   disabled?: boolean
   /** Icon component to display */
   icon?: object
+  /** Prevent auto-close after clicking this item */
+  preventClose?: boolean
 }>(), {
   danger: false,
   disabled: false,
+  preventClose: false,
 })
 
 const emit = defineEmits<{
   click: []
 }>()
 
+// Inject close function from parent ContextMenu
+const contextMenuClose = inject<() => void>('contextMenuClose', () => {})
+
 function handleClick() {
-  if (!props.disabled) {
-    emit('click')
+  if (props.disabled) return
+
+  emit('click')
+
+  if (!props.preventClose) {
+    contextMenuClose()
   }
 }
 </script>
@@ -38,4 +48,3 @@ function handleClick() {
     <slot />
   </button>
 </template>
-

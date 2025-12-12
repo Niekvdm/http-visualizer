@@ -96,7 +96,7 @@ const lineCount = computed(() => {
         <button
           v-for="type in bodyTypes"
           :key="type.value || 'none'"
-          class="px-2 py-1 text-[10px] font-mono uppercase rounded transition-colors"
+          class="px-2 py-1 text-xs font-mono uppercase rounded transition-colors"
           :class="[
             localBodyType === type.value
               ? 'bg-[var(--color-primary)] text-[var(--color-bg)]'
@@ -121,7 +121,7 @@ const lineCount = computed(() => {
     <div v-else-if="localBodyType" class="relative">
       <!-- Line numbers -->
       <div 
-        class="absolute left-0 top-0 bottom-0 w-8 bg-[var(--color-bg-tertiary)] border-r border-[var(--color-border)] text-right pr-2 pt-2 text-[10px] text-[var(--color-text-dim)] font-mono select-none overflow-hidden"
+        class="absolute left-0 top-0 bottom-0 w-8 bg-[var(--color-bg-tertiary)] border-r border-[var(--color-border)] text-right pr-2 pt-2 text-xs text-[var(--color-text-dim)] font-mono select-none overflow-hidden"
       >
         <div v-for="n in Math.max(lineCount, 10)" :key="n" class="leading-[1.5]">
           {{ n }}

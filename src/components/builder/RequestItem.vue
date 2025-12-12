@@ -1,12 +1,11 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed } from 'vue'
 import type { CollectionRequest } from '@/types'
-import { useDropdownMenu } from '@/composables/useDropdownMenu'
 import { useConfirmDialog } from '@/composables/useConfirmDialog'
 import MethodBadge from '@/components/shared/MethodBadge.vue'
-import DropdownMenu from '@/components/shared/DropdownMenu.vue'
-import DropdownMenuItem from '@/components/shared/DropdownMenuItem.vue'
-import DropdownDivider from '@/components/shared/DropdownDivider.vue'
+import ContextMenu from '@/components/shared/ContextMenu.vue'
+import ContextMenuItem from '@/components/shared/ContextMenuItem.vue'
+import ContextMenuDivider from '@/components/shared/ContextMenuDivider.vue'
 import { 
   MoreVertical, 
   Pencil, 
@@ -31,13 +30,6 @@ const emit = defineEmits<{
   'duplicate': []
   'delete': []
 }>()
-
-// Dropdown menu
-const menuRef = ref<HTMLElement | null>(null)
-const { isOpen: showMenu, toggle: toggleMenu, close: closeMenu } = useDropdownMenu(menuRef, {
-  align: 'right',
-  alignOffset: 100,
-})
 
 // Confirm dialog
 const { confirm } = useConfirmDialog()
@@ -69,21 +61,17 @@ const authTooltip = computed(() => {
 // Menu actions
 function handleEdit() {
   emit('edit')
-  closeMenu()
 }
 
 function handleRun() {
   emit('run')
-  closeMenu()
 }
 
 function handleDuplicate() {
   emit('duplicate')
-  closeMenu()
 }
 
-async function handleDelete() {
-  closeMenu()
+function handleDelete() {
   emit('delete')
 }
 </script>
@@ -130,35 +118,29 @@ async function handleDelete() {
     </button>
     
     <!-- Context menu -->
-    <div class="relative" ref="menuRef">
-      <button
-        class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
-        title="More options"
-        @click.stop="toggleMenu"
-      >
-        <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
-      </button>
+    <ContextMenu align="right">
+      <template #trigger>
+        <button
+          class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
+          title="More options"
+        >
+          <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
+        </button>
+      </template>
 
-      <DropdownMenu
-        v-model="showMenu"
-        :trigger-ref="menuRef"
-        align="right"
-        :align-offset="100"
-      >
-        <DropdownMenuItem :icon="Pencil" @click="handleEdit">
-          Edit
-        </DropdownMenuItem>
-        <DropdownMenuItem :icon="Play" @click="handleRun">
-          Run
-        </DropdownMenuItem>
-        <DropdownMenuItem :icon="Copy" @click="handleDuplicate">
-          Duplicate
-        </DropdownMenuItem>
-        <DropdownDivider />
-        <DropdownMenuItem :icon="Trash2" danger @click="handleDelete">
-          Delete
-        </DropdownMenuItem>
-      </DropdownMenu>
-    </div>
+      <ContextMenuItem :icon="Pencil" @click="handleEdit">
+        Edit
+      </ContextMenuItem>
+      <ContextMenuItem :icon="Play" @click="handleRun">
+        Run
+      </ContextMenuItem>
+      <ContextMenuItem :icon="Copy" @click="handleDuplicate">
+        Duplicate
+      </ContextMenuItem>
+      <ContextMenuDivider />
+      <ContextMenuItem :icon="Trash2" danger @click="handleDelete">
+        Delete
+      </ContextMenuItem>
+    </ContextMenu>
   </div>
 </template>

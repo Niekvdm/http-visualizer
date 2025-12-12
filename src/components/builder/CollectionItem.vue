@@ -3,13 +3,12 @@ import { ref, computed, watch } from 'vue'
 import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useRequestStore } from '@/stores/requestStore'
-import { useDropdownMenu } from '@/composables/useDropdownMenu'
 import { useConfirmDialog, confirmActions } from '@/composables/useConfirmDialog'
 import FolderItem from './FolderItem.vue'
 import RequestItem from './RequestItem.vue'
-import DropdownMenu from '@/components/shared/DropdownMenu.vue'
-import DropdownMenuItem from '@/components/shared/DropdownMenuItem.vue'
-import DropdownDivider from '@/components/shared/DropdownDivider.vue'
+import ContextMenu from '@/components/shared/ContextMenu.vue'
+import ContextMenuItem from '@/components/shared/ContextMenuItem.vue'
+import ContextMenuDivider from '@/components/shared/ContextMenuDivider.vue'
 import draggable from 'vuedraggable'
 import { 
   ChevronRight, 
@@ -34,13 +33,6 @@ const emit = defineEmits<{
 const collectionStore = useCollectionStore()
 const requestStore = useRequestStore()
 const { confirm } = useConfirmDialog()
-
-// Dropdown menu
-const menuRef = ref<HTMLElement | null>(null)
-const { isOpen: showMenu, toggle: toggleMenu, close: closeMenu } = useDropdownMenu(menuRef, {
-  align: 'right',
-  alignOffset: 120,
-})
 
 // Rename state
 const isRenaming = ref(false)
@@ -97,7 +89,6 @@ function selectCollection() {
 function startRename() {
   renameInput.value = props.collection.name
   isRenaming.value = true
-  closeMenu()
 }
 
 function finishRename() {
@@ -112,7 +103,6 @@ function cancelRename() {
 }
 
 async function deleteCollection() {
-  closeMenu()
   const confirmed = await confirm(
     confirmActions.deleteWithWarning(props.collection.name, 'All requests in this collection will be deleted.')
   )
@@ -123,12 +113,10 @@ async function deleteCollection() {
 
 function addFolder() {
   emit('new-folder', props.collection.id)
-  closeMenu()
 }
 
 function addRequest() {
   emit('new-request', props.collection.id)
-  closeMenu()
 }
 
 function selectRequest(requestId: string) {
@@ -212,36 +200,30 @@ function onRequestAdd(evt: { added?: { newIndex: number; element: CollectionRequ
         {{ collection.requests.length }}
       </span>
 
-      <!-- Context menu button -->
-      <div class="relative" ref="menuRef">
-        <button
-          class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
-          @click.stop="toggleMenu"
-        >
-          <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
-        </button>
+      <!-- Context menu -->
+      <ContextMenu align="right">
+        <template #trigger>
+          <button
+            class="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-[var(--color-bg)] transition-opacity shrink-0"
+          >
+            <MoreVertical class="w-3.5 h-3.5 text-[var(--color-text-dim)]" />
+          </button>
+        </template>
 
-        <DropdownMenu
-          v-model="showMenu"
-          :trigger-ref="menuRef"
-          align="right"
-          :align-offset="120"
-        >
-          <DropdownMenuItem :icon="FilePlus" @click="addRequest">
-            New Request
-          </DropdownMenuItem>
-          <DropdownMenuItem :icon="FolderPlus" @click="addFolder">
-            New Folder
-          </DropdownMenuItem>
-          <DropdownDivider />
-          <DropdownMenuItem :icon="Pencil" @click="startRename">
-            Rename
-          </DropdownMenuItem>
-          <DropdownMenuItem :icon="Trash2" danger @click="deleteCollection">
-            Delete
-          </DropdownMenuItem>
-        </DropdownMenu>
-      </div>
+        <ContextMenuItem :icon="FilePlus" @click="addRequest">
+          New Request
+        </ContextMenuItem>
+        <ContextMenuItem :icon="FolderPlus" @click="addFolder">
+          New Folder
+        </ContextMenuItem>
+        <ContextMenuDivider />
+        <ContextMenuItem :icon="Pencil" @click="startRename">
+          Rename
+        </ContextMenuItem>
+        <ContextMenuItem :icon="Trash2" danger @click="deleteCollection">
+          Delete
+        </ContextMenuItem>
+      </ContextMenu>
     </div>
 
     <!-- Collapsible content -->

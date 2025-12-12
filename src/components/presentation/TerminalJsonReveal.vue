@@ -303,7 +303,7 @@ watch(() => props.data, () => {
   padding: 6px 12px;
   background: var(--crt-bg);
   border-bottom: 1px solid var(--phosphor-dim);
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
 }
 
 .header-left {
@@ -388,7 +388,7 @@ watch(() => props.data, () => {
   background: none;
   border: none;
   color: var(--phosphor-dim);
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
   font-size: 11px;
   cursor: pointer;
   padding: 2px 4px;
@@ -444,7 +444,7 @@ watch(() => props.data, () => {
   overflow-x: auto;
   z-index: 1;
   display: flex;
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
   font-size: 13px;
   line-height: 1.6;
 }
@@ -561,7 +561,7 @@ watch(() => props.data, () => {
   padding: 6px 12px;
   background: var(--crt-bg);
   border-top: 1px solid var(--phosphor-dim);
-  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-family: var(--font-code);
   font-size: 10px;
 }
 
