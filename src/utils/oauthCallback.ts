@@ -90,6 +90,7 @@ export async function handleAuthCodeCallback(code: string, state: string): Promi
       clientId: string
       clientSecret?: string
       redirectUri: string
+      audience?: string  // Resource/audience for the token (required by some providers like Logto)
       usePkce: boolean
     }
   }
@@ -113,8 +114,16 @@ export async function handleAuthCodeCallback(code: string, state: string): Promi
   if (config.usePkce && pkce?.verifier) {
     body.append('code_verifier', pkce.verifier)
   }
+  
+  // Add resource/audience parameter (required by some providers like Logto)
+  const audience = config.audience?.trim()
+  if (audience) {
+    body.append('resource', audience)
+  }
 
   // Exchange code for token
+  console.log('[OAuth Callback] Exchanging code for token', { tokenUrl: config.tokenUrl, body: body.toString() })
+  
   const response = await fetch(config.tokenUrl, {
     method: 'POST',
     headers: {
@@ -125,10 +134,18 @@ export async function handleAuthCodeCallback(code: string, state: string): Promi
 
   if (!response.ok) {
     const errorText = await response.text()
+    console.error('[OAuth Callback] Token exchange failed', { status: response.status, error: errorText })
     throw new Error(`Token exchange failed: ${response.status} - ${errorText}`)
   }
 
   const data = await response.json()
+  console.log('[OAuth Callback] Token response received', { 
+    hasAccessToken: !!data.access_token,
+    hasRefreshToken: !!data.refresh_token,
+    tokenType: data.token_type,
+    expiresIn: data.expires_in
+  })
+  
   const token: CachedToken = {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
@@ -136,6 +153,8 @@ export async function handleAuthCodeCallback(code: string, state: string): Promi
     expiresAt: data.expires_in ? Date.now() + data.expires_in * 1000 : undefined,
     scope: data.scope,
   }
+  
+  console.log('[OAuth Callback] Sending token to parent', { tokenKey, hasToken: !!token.accessToken })
 
   // Notify parent window
   if (window.opener) {

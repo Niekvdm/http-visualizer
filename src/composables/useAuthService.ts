@@ -10,7 +10,6 @@ import type {
   OAuth2ImplicitConfig,
 } from '@/types'
 import { authLogger, tokenLogger } from '@/utils/authLogger'
-import { executeRequestViaExtension, isExtensionInstalled } from './useExtensionBridge'
 
 // PKCE helpers
 function generateRandomString(length: number): string {
@@ -36,7 +35,8 @@ async function generateCodeChallenge(verifier: string): Promise<string> {
 const pkceState = new Map<string, { verifier: string; state: string }>()
 
 /**
- * Fetch a token from the token endpoint, using extension for CORS bypass when available
+ * Fetch a token from the token endpoint using direct browser fetch.
+ * OAuth2 token endpoints typically have proper CORS headers configured.
  */
 async function fetchToken(
   url: string, 
@@ -45,42 +45,7 @@ async function fetchToken(
   const headers = { 'Content-Type': 'application/x-www-form-urlencoded' }
   const bodyString = body.toString()
   
-  // Try extension first for CORS bypass
-  if (isExtensionInstalled()) {
-    tokenLogger.debug('Using extension for token request (CORS bypass)')
-    try {
-      const response = await executeRequestViaExtension({
-        method: 'POST',
-        url,
-        headers,
-        body: bodyString,
-        timeout: 30000,
-      })
-      
-      // Extension response wraps data in .data property
-      const respData = response.data
-      if (!respData) {
-        return { ok: false, status: 0, statusText: 'No response data', error: 'Extension returned no data' }
-      }
-      
-      if (respData.status >= 200 && respData.status < 300) {
-        try {
-          const data = JSON.parse(respData.body || '{}') as Record<string, unknown>
-          return { ok: true, status: respData.status, statusText: respData.statusText || 'OK', data }
-        } catch {
-          return { ok: false, status: respData.status, statusText: 'Invalid JSON response', error: respData.body }
-        }
-      } else {
-        return { ok: false, status: respData.status, statusText: respData.statusText || 'Error', error: respData.body }
-      }
-    } catch (err) {
-      tokenLogger.warn('Extension request failed, falling back to direct fetch', err)
-      // Fall through to direct fetch
-    }
-  }
-  
-  // Direct fetch (may fail due to CORS)
-  tokenLogger.debug('Using direct fetch for token request')
+  tokenLogger.debug('Fetching token via browser', { url })
   const response = await fetch(url, {
     method: 'POST',
     headers,
@@ -393,6 +358,7 @@ export function useAuthService() {
       clientId: config.clientId,
       redirectUri: config.redirectUri,
       scope: config.scope,
+      audience: config.audience,
       usePkce: config.usePkce
     })
     
@@ -401,6 +367,13 @@ export function useAuthService() {
 
     if (config.scope) {
       authUrl += `&scope=${encodeURIComponent(config.scope)}`
+    }
+    
+    // Add resource/audience parameter (required by some providers like Logto)
+    const audience = config.audience?.trim()
+    if (audience) {
+      authUrl += `&resource=${encodeURIComponent(audience)}`
+      authLogger.debug('Adding resource/audience to auth URL', { audience })
     }
 
     let verifier = ''
@@ -418,6 +391,7 @@ export function useAuthService() {
 
     // Open popup for authorization
     authLogger.info('Opening authorization popup')
+    console.log('[Auth] Full authorization URL:', authUrl)
     const popup = openAuthPopup(authUrl)
     if (!popup) {
       authLogger.error('Failed to open popup')
@@ -428,12 +402,34 @@ export function useAuthService() {
     // Wait for callback via postMessage
     authLogger.info('Waiting for callback...')
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      let popupCheckInterval: ReturnType<typeof setInterval> | null = null
+      
+      const cleanup = () => {
         window.removeEventListener('message', handleMessage)
+        if (popupCheckInterval) {
+          clearInterval(popupCheckInterval)
+          popupCheckInterval = null
+        }
+        pkceState.delete(tokenKey)
+      }
+      
+      const timeout = setTimeout(() => {
+        cleanup()
         authLogger.error('Authorization timed out')
         authLogger.groupEnd()
         reject(new Error('Authorization timed out. Please try again.'))
       }, 5 * 60 * 1000) // 5 minute timeout
+
+      // Check if popup was closed by user
+      popupCheckInterval = setInterval(() => {
+        if (popup.closed) {
+          clearTimeout(timeout)
+          cleanup()
+          authLogger.warn('Authorization popup closed by user')
+          authLogger.groupEnd()
+          reject(new Error('Authorization cancelled. Popup was closed.'))
+        }
+      }, 500)
 
       function handleMessage(event: MessageEvent) {
         // Verify origin
@@ -444,8 +440,7 @@ export function useAuthService() {
 
         // Clean up
         clearTimeout(timeout)
-        window.removeEventListener('message', handleMessage)
-        pkceState.delete(tokenKey)
+        cleanup()
 
         if (data.success && data.token) {
           authLogger.info('Authorization successful, token received')
@@ -496,12 +491,33 @@ export function useAuthService() {
     // Wait for callback via postMessage
     authLogger.info('Waiting for callback...')
     return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
+      let popupCheckInterval: ReturnType<typeof setInterval> | null = null
+      
+      const cleanup = () => {
         window.removeEventListener('message', handleMessage)
+        if (popupCheckInterval) {
+          clearInterval(popupCheckInterval)
+          popupCheckInterval = null
+        }
+      }
+      
+      const timeout = setTimeout(() => {
+        cleanup()
         authLogger.error('Authorization timed out')
         authLogger.groupEnd()
         reject(new Error('Authorization timed out. Please try again.'))
       }, 5 * 60 * 1000) // 5 minute timeout
+
+      // Check if popup was closed by user
+      popupCheckInterval = setInterval(() => {
+        if (popup.closed) {
+          clearTimeout(timeout)
+          cleanup()
+          authLogger.warn('Authorization popup closed by user')
+          authLogger.groupEnd()
+          reject(new Error('Authorization cancelled. Popup was closed.'))
+        }
+      }, 500)
 
       function handleMessage(event: MessageEvent) {
         // Verify origin
@@ -512,7 +528,7 @@ export function useAuthService() {
 
         // Clean up
         clearTimeout(timeout)
-        window.removeEventListener('message', handleMessage)
+        cleanup()
 
         if (data.success && data.token) {
           authLogger.info('Authorization successful, token received')

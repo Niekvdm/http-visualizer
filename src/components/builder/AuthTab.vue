@@ -291,6 +291,7 @@ function syncOAuth2ConfigToAuthStore() {
         clientSecret: resolve(oauth2.clientSecret),
         redirectUri: resolve(oauth2.redirectUri),
         scope: resolve(oauth2.scope),
+        audience: resolve(oauth2.audience),
         usePkce: oauth2.usePkce ?? true,
       }
     })
@@ -355,6 +356,7 @@ async function initiateAuth() {
         clientSecret: resolve(oauth2.clientSecret),
         redirectUri: resolve(oauth2.redirectUri),
         scope: resolve(oauth2.scope),
+        audience: resolve(oauth2.audience),
         usePkce: oauth2.usePkce ?? true,
       })
     } else if (isImplicitGrant.value) {
@@ -722,6 +724,22 @@ const basicPreview = computed(() => {
           placeholder="e.g., openid profile email"
           @update:model-value="updateOAuth2('scope', $event)"
         />
+      </div>
+
+      <!-- Audience/Resource (for providers like Logto) -->
+      <div v-if="needsAuthorizationUrl || localAuth.oauth2.grantType === 'client_credentials'">
+        <label class="block text-xs text-[var(--color-text-dim)] uppercase tracking-wider mb-1">
+          Audience / Resource (optional)
+        </label>
+        <VariableInput
+          :model-value="localAuth.oauth2.audience || ''"
+          :collection-id="collectionId"
+          placeholder="e.g., https://api.example.com"
+          @update:model-value="updateOAuth2('audience', $event)"
+        />
+        <p class="text-xs text-[var(--color-text-dim)] mt-1 opacity-70">
+          Required by some providers (e.g., Logto, Auth0) to get an access token for a specific API
+        </p>
       </div>
 
       <!-- PKCE checkbox (auth code only) -->

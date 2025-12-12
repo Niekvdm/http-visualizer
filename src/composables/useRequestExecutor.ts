@@ -17,16 +17,17 @@ export function useRequestExecutor() {
   const isExecuting = ref(false)
   const funnyTextInterval = ref<ReturnType<typeof setInterval> | null>(null)
 
-  async function executeRequest(request: ParsedRequest, fileId?: string): Promise<void> {
+  async function executeRequest(request: ParsedRequest, fileId?: string, isRetry = false): Promise<void> {
     if (isExecuting.value) return
 
     isExecuting.value = true
-    requestLogger.group('Execute Request')
+    requestLogger.group(isRetry ? 'Execute Request (Retry after reauth)' : 'Execute Request')
     requestLogger.info('Starting request execution', { 
       requestId: request.id, 
       method: request.method, 
       url: request.url,
-      fileId 
+      fileId,
+      isRetry
     })
     
     // Get resolved variables for this request
@@ -214,6 +215,62 @@ export function useRequestExecutor() {
         requestLogger.info('Phase 3: Success')
         requestStore.setExecutionPhase('success')
         requestLogger.groupEnd()
+        // Add to history
+        requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+      } else if (executionResponse.status === 401 && !isRetry) {
+        // Check if we can auto-reauth with authorization code flow
+        const config = authStore.getAuthConfig(request.id, fileId)
+        if (config?.type === 'oauth2-authorization-code' && config.oauth2AuthorizationCode) {
+          requestLogger.info('401 Unauthorized - attempting auto-reauth with Authorization Code flow')
+          requestStore.setExecutionPhase('authenticating')
+          
+          try {
+            // Determine the token cache key
+            const authSource = authStore.getAuthConfigSource(request.id, fileId)
+            const tokenKey = authSource === 'file' && fileId ? `file:${fileId}` : request.id
+            
+            // Clear existing token and initiate auth flow (shows popup)
+            authStore.clearCachedToken(tokenKey)
+            await authService.initiateAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
+            
+            requestLogger.info('Re-authentication successful, retrying request')
+            requestLogger.groupEnd()
+            
+            // Reset executing state so retry can proceed
+            isExecuting.value = false
+            stopFunnyTextRotation()
+            
+            // Retry the request with the new token
+            return executeRequest(request, fileId, true)
+          } catch (authError) {
+            // Auth failed or user cancelled - show original 401 error
+            requestLogger.warn('Auto-reauth failed or cancelled', authError)
+            requestStore.executionState.error = {
+              message: `HTTP 401: ${executionResponse.statusText} (re-authentication failed)`,
+              code: '401',
+              phase: 'authenticating',
+            }
+            requestStore.setExecutionPhase('error')
+            requestLogger.groupEnd()
+            // Add to history
+            requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+          }
+        } else {
+          // No auth code flow configured, show normal 401 error
+          requestLogger.warn('Phase 3: HTTP Error (no auto-reauth available)', { 
+            status: executionResponse.status, 
+            statusText: executionResponse.statusText 
+          })
+          requestStore.executionState.error = {
+            message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,
+            code: String(executionResponse.status),
+            phase: 'fetching',
+          }
+          requestStore.setExecutionPhase('error')
+          requestLogger.groupEnd()
+          // Add to history
+          requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+        }
       } else {
         requestLogger.warn('Phase 3: HTTP Error', { 
           status: executionResponse.status, 
@@ -226,10 +283,9 @@ export function useRequestExecutor() {
         }
         requestStore.setExecutionPhase('error')
         requestLogger.groupEnd()
+        // Add to history
+        requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
       }
-
-      // Add to history
-      requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
 
     } catch (error) {
       // Handle network errors

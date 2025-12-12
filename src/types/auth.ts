@@ -63,6 +63,7 @@ export interface OAuth2AuthorizationCodeConfig {
   clientSecret?: string
   redirectUri: string
   scope?: string
+  audience?: string  // Resource/audience for the token (required by some providers like Logto)
   usePkce: boolean
   state?: string
 }
@@ -137,6 +138,7 @@ export interface HttpAuth {
     clientSecret?: string            // Optional for auth code, not used for implicit
     redirectUri?: string             // Auth code + implicit only
     scope?: string
+    audience?: string                // Resource/audience for the token (required by some providers like Logto)
     usePkce?: boolean                // Auth code only
     // Password grant fields
     username?: string
