@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { ParsedFile, ParsedRequest, ExecutionState, ExecutionHistory, ExecutionPhase } from '@/types'
 import { generateId } from '@/utils/formatters'
-import { getRandomFetchingText, getRandomAuthText, getRandomSuccessText, getRandomErrorText } from '@/utils/funnyTexts'
+import { getRandomFetchingText, getRandomAuthText, getRandomAuthorizingText, getRandomSuccessText, getRandomErrorText } from '@/utils/funnyTexts'
 
 export const useRequestStore = defineStore('requests', () => {
   // State
@@ -106,11 +106,17 @@ export const useRequestStore = defineStore('requests', () => {
   // Execution state management
   function setExecutionPhase(phase: ExecutionPhase) {
     executionState.value.phase = phase
-    
+
     switch (phase) {
       case 'authenticating':
         executionState.value.funnyText = getRandomAuthText()
         executionState.value.startTime = Date.now()
+        break
+      case 'authorizing':
+        executionState.value.funnyText = getRandomAuthorizingText()
+        if (executionState.value.startTime === 0) {
+          executionState.value.startTime = Date.now()
+        }
         break
       case 'fetching':
         executionState.value.funnyText = getRandomFetchingText()
@@ -122,11 +128,13 @@ export const useRequestStore = defineStore('requests', () => {
         executionState.value.funnyText = getRandomSuccessText()
         executionState.value.endTime = Date.now()
         executionState.value.duration = executionState.value.endTime - executionState.value.startTime
+        clearOAuthState()
         break
       case 'error':
         executionState.value.funnyText = getRandomErrorText()
         executionState.value.endTime = Date.now()
         executionState.value.duration = executionState.value.endTime - executionState.value.startTime
+        clearOAuthState()
         break
       case 'idle':
         executionState.value.funnyText = ''
@@ -136,13 +144,35 @@ export const useRequestStore = defineStore('requests', () => {
         executionState.value.sentRequest = undefined
         executionState.value.response = undefined
         executionState.value.error = undefined
+        clearOAuthState()
         break
     }
+  }
+
+  // OAuth state management for iframe-based auth
+  function setOAuthState(authUrl: string, state: string, tokenKey: string, usePopup = false) {
+    executionState.value.oauthAuthUrl = authUrl
+    executionState.value.oauthState = state
+    executionState.value.oauthTokenKey = tokenKey
+    executionState.value.oauthUsePopup = usePopup
+  }
+
+  function clearOAuthState() {
+    executionState.value.oauthAuthUrl = undefined
+    executionState.value.oauthState = undefined
+    executionState.value.oauthTokenKey = undefined
+    executionState.value.oauthUsePopup = undefined
+  }
+
+  function setOAuthUsePopup(usePopup: boolean) {
+    executionState.value.oauthUsePopup = usePopup
   }
   
   function updateFunnyText() {
     if (executionState.value.phase === 'authenticating') {
       executionState.value.funnyText = getRandomAuthText()
+    } else if (executionState.value.phase === 'authorizing') {
+      executionState.value.funnyText = getRandomAuthorizingText()
     } else if (executionState.value.phase === 'fetching') {
       executionState.value.funnyText = getRandomFetchingText()
     }
@@ -193,13 +223,13 @@ export const useRequestStore = defineStore('requests', () => {
     executionState,
     history,
     globalVariables,
-    
+
     // Computed
     selectedFile,
     selectedRequest,
     allRequests,
     isExecuting,
-    
+
     // Actions
     addFile,
     removeFile,
@@ -214,6 +244,10 @@ export const useRequestStore = defineStore('requests', () => {
     reset,
     clearSelection,
     clearAll,
+    // OAuth state management
+    setOAuthState,
+    clearOAuthState,
+    setOAuthUsePopup,
   }
 })
 

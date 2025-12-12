@@ -61,6 +61,9 @@ async function fetchToken(
   }
 }
 
+// Store pending auth abort functions (module-level to share across all instances)
+const pendingAuthAbort = new Map<string, () => void>()
+
 export function useAuthService() {
   const authStore = useAuthStore()
 
@@ -349,10 +352,13 @@ export function useAuthService() {
     return token
   }
 
-  // Initiate OAuth2 Authorization Code flow (opens popup)
-  async function initiateAuthCodeFlow(tokenKey: string, config: OAuth2AuthorizationCodeConfig): Promise<CachedToken> {
-    authLogger.group('Authorization Code Flow')
-    authLogger.debug('Config', { 
+  /**
+   * Prepare OAuth2 Authorization Code flow - generates URL and state but doesn't open popup/iframe
+   * Returns the auth URL and state for use with iframe or popup
+   */
+  async function prepareAuthCodeFlow(tokenKey: string, config: OAuth2AuthorizationCodeConfig): Promise<{ authUrl: string; state: string }> {
+    authLogger.group('Prepare Authorization Code Flow')
+    authLogger.debug('Config', {
       authorizationUrl: config.authorizationUrl,
       tokenUrl: config.tokenUrl,
       clientId: config.clientId,
@@ -361,14 +367,14 @@ export function useAuthService() {
       audience: config.audience,
       usePkce: config.usePkce
     })
-    
+
     const state = generateRandomString(32)
     let authUrl = `${config.authorizationUrl}?response_type=code&client_id=${encodeURIComponent(config.clientId)}&redirect_uri=${encodeURIComponent(config.redirectUri)}&state=${state}`
 
     if (config.scope) {
       authUrl += `&scope=${encodeURIComponent(config.scope)}`
     }
-    
+
     // Add resource/audience parameter (required by some providers like Logto)
     const audience = config.audience?.trim()
     if (audience) {
@@ -389,57 +395,73 @@ export function useAuthService() {
     sessionStorage.setItem(`oauth2-pending-${state}`, JSON.stringify({ tokenKey, config }))
     sessionStorage.setItem(`oauth2-pkce-${state}`, JSON.stringify({ verifier, state }))
 
-    // Open popup for authorization
-    authLogger.info('Opening authorization popup')
-    console.log('[Auth] Full authorization URL:', authUrl)
-    const popup = openAuthPopup(authUrl)
-    if (!popup) {
-      authLogger.error('Failed to open popup')
-      authLogger.groupEnd()
-      throw new Error('Failed to open authorization popup. Please allow popups for this site.')
-    }
+    authLogger.info('Auth URL prepared', { state })
+    authLogger.groupEnd()
 
-    // Wait for callback via postMessage
-    authLogger.info('Waiting for callback...')
+    return { authUrl, state }
+  }
+
+  /**
+   * Wait for OAuth callback via postMessage (works for both iframe and popup)
+   * Returns a promise that resolves with the token when callback is received
+   */
+  function waitForAuthCallback(tokenKey: string, state: string, popup?: Window | null): Promise<CachedToken> {
+    authLogger.group('Wait for Auth Callback')
+    authLogger.info('Waiting for callback...', { state, isPopup: !!popup })
+
     return new Promise((resolve, reject) => {
       let popupCheckInterval: ReturnType<typeof setInterval> | null = null
-      
+      let timeoutId: ReturnType<typeof setTimeout> | null = null
+
       const cleanup = () => {
         window.removeEventListener('message', handleMessage)
         if (popupCheckInterval) {
           clearInterval(popupCheckInterval)
           popupCheckInterval = null
         }
+        if (timeoutId) {
+          clearTimeout(timeoutId)
+          timeoutId = null
+        }
         pkceState.delete(tokenKey)
+        pendingAuthAbort.delete(state)
       }
-      
-      const timeout = setTimeout(() => {
+
+      // Register abort function
+      pendingAuthAbort.set(state, () => {
+        cleanup()
+        authLogger.warn('Authorization aborted by user')
+        authLogger.groupEnd()
+        reject(new Error('Authorization cancelled.'))
+      })
+
+      timeoutId = setTimeout(() => {
         cleanup()
         authLogger.error('Authorization timed out')
         authLogger.groupEnd()
         reject(new Error('Authorization timed out. Please try again.'))
       }, 5 * 60 * 1000) // 5 minute timeout
 
-      // Check if popup was closed by user
-      popupCheckInterval = setInterval(() => {
-        if (popup.closed) {
-          clearTimeout(timeout)
-          cleanup()
-          authLogger.warn('Authorization popup closed by user')
-          authLogger.groupEnd()
-          reject(new Error('Authorization cancelled. Popup was closed.'))
-        }
-      }, 500)
+      // Check if popup was closed by user (only for popup mode)
+      if (popup) {
+        popupCheckInterval = setInterval(() => {
+          if (popup.closed) {
+            cleanup()
+            authLogger.warn('Authorization popup closed by user')
+            authLogger.groupEnd()
+            reject(new Error('Authorization cancelled. Popup was closed.'))
+          }
+        }, 500)
+      }
 
       function handleMessage(event: MessageEvent) {
         // Verify origin
         if (event.origin !== window.location.origin) return
-        
+
         const data = event.data
         if (data?.type !== 'oauth2-callback' || data?.state !== state) return
 
         // Clean up
-        clearTimeout(timeout)
         cleanup()
 
         if (data.success && data.token) {
@@ -456,6 +478,53 @@ export function useAuthService() {
 
       window.addEventListener('message', handleMessage)
     })
+  }
+
+  /**
+   * Abort a pending auth callback by state
+   */
+  function abortPendingAuth(state: string) {
+    const abort = pendingAuthAbort.get(state)
+    if (abort) {
+      abort()
+    }
+  }
+
+  /**
+   * Open popup fallback when iframe is blocked
+   * Returns the popup window reference
+   */
+  function openAuthPopupFallback(authUrl: string): Window | null {
+    authLogger.info('Opening authorization popup (fallback)')
+    console.log('[Auth] Popup fallback URL:', authUrl)
+    return openAuthPopup(authUrl)
+  }
+
+  // Initiate OAuth2 Authorization Code flow (opens popup) - legacy method for backward compatibility
+  async function initiateAuthCodeFlow(tokenKey: string, config: OAuth2AuthorizationCodeConfig): Promise<CachedToken> {
+    authLogger.group('Authorization Code Flow (Popup)')
+
+    const { authUrl, state } = await prepareAuthCodeFlow(tokenKey, config)
+
+    // Open popup for authorization
+    authLogger.info('Opening authorization popup')
+    console.log('[Auth] Full authorization URL:', authUrl)
+    const popup = openAuthPopup(authUrl)
+    if (!popup) {
+      authLogger.error('Failed to open popup')
+      authLogger.groupEnd()
+      throw new Error('Failed to open authorization popup. Please allow popups for this site.')
+    }
+
+    // Wait for callback via postMessage
+    try {
+      const token = await waitForAuthCallback(tokenKey, state, popup)
+      authLogger.groupEnd()
+      return token
+    } catch (error) {
+      authLogger.groupEnd()
+      throw error
+    }
   }
 
   // Initiate OAuth2 Implicit flow (opens popup)
@@ -733,6 +802,12 @@ export function useAuthService() {
     getAuthHeaders,
     getApiKeyQueryParams,
     getOrRefreshToken,
+    // New iframe-first auth flow methods
+    prepareAuthCodeFlow,
+    waitForAuthCallback,
+    abortPendingAuth,
+    openAuthPopupFallback,
+    // Legacy popup-based methods (still work)
     initiateAuthCodeFlow,
     initiateImplicitFlow,
     testAuthConfig,

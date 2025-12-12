@@ -7,7 +7,7 @@
 import type { SentRequest } from './request'
 
 // Execution phases
-export type ExecutionPhase = 'idle' | 'authenticating' | 'fetching' | 'success' | 'error'
+export type ExecutionPhase = 'idle' | 'authenticating' | 'authorizing' | 'fetching' | 'success' | 'error'
 
 // Detailed timing breakdown from Performance Resource Timing API
 export interface ResponseTiming {
@@ -133,6 +133,11 @@ export interface ExecutionState {
   sentRequest?: SentRequest
   response?: ExecutionResponse
   error?: ExecutionError
+  // OAuth authorization state (for iframe-based auth flow)
+  oauthAuthUrl?: string       // Authorization URL for iframe/popup
+  oauthState?: string         // State parameter for callback matching
+  oauthUsePopup?: boolean     // Whether to use popup fallback (iframe blocked)
+  oauthTokenKey?: string      // Token key for storing the result
 }
 
 // Execution History Entry

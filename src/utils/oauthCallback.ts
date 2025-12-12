@@ -156,9 +156,10 @@ export async function handleAuthCodeCallback(code: string, state: string): Promi
   
   console.log('[OAuth Callback] Sending token to parent', { tokenKey, hasToken: !!token.accessToken })
 
-  // Notify parent window
-  if (window.opener) {
-    window.opener.postMessage({
+  // Notify parent window (works for both popup and iframe)
+  const parentWindow = window.opener || (window.parent !== window ? window.parent : null)
+  if (parentWindow) {
+    parentWindow.postMessage({
       type: 'oauth2-callback',
       success: true,
       tokenKey,
@@ -196,9 +197,10 @@ export function handleImplicitCallback(result: OAuthCallbackResult): void {
     // Implicit flow doesn't provide refresh tokens
   }
 
-  // Notify parent window
-  if (window.opener) {
-    window.opener.postMessage({
+  // Notify parent window (works for both popup and iframe)
+  const parentWindow = window.opener || (window.parent !== window ? window.parent : null)
+  if (parentWindow) {
+    parentWindow.postMessage({
       type: 'oauth2-callback',
       success: true,
       tokenKey,
@@ -217,9 +219,10 @@ export function handleImplicitCallback(result: OAuthCallbackResult): void {
 export function handleErrorCallback(result: OAuthCallbackResult): void {
   if (result.type !== 'error') return
 
-  // Notify parent window of error
-  if (window.opener) {
-    window.opener.postMessage({
+  // Notify parent window of error (works for both popup and iframe)
+  const parentWindow = window.opener || (window.parent !== window ? window.parent : null)
+  if (parentWindow) {
+    parentWindow.postMessage({
       type: 'oauth2-callback',
       success: false,
       error: result.error,
@@ -339,9 +342,10 @@ export async function handleOAuthCallbackIfNeeded(): Promise<boolean> {
     const message = error instanceof Error ? error.message : 'Unknown error occurred'
     renderCallbackPage('error', message)
 
-    // Notify parent of error
-    if (window.opener && result.state) {
-      window.opener.postMessage({
+    // Notify parent of error (works for both popup and iframe)
+    const parentWindow = window.opener || (window.parent !== window ? window.parent : null)
+    if (parentWindow && result.state) {
+      parentWindow.postMessage({
         type: 'oauth2-callback',
         success: false,
         error: 'callback_error',

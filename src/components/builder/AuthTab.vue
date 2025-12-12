@@ -5,6 +5,7 @@ import { useCollectionStore } from '@/stores/collectionStore'
 import { useAuthService } from '@/composables/useAuthService'
 import { useAuthStore } from '@/stores/authStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
+import { useRequestStore } from '@/stores/requestStore'
 import { resolveVariables } from '@/utils/variableResolver'
 import { Lock, Eye, EyeOff, FolderOpen, AlertTriangle, Check } from 'lucide-vue-next'
 import VariableInput from './VariableInput.vue'
@@ -24,6 +25,7 @@ const collectionStore = useCollectionStore()
 const authService = useAuthService()
 const authStore = useAuthStore()
 const environmentStore = useEnvironmentStore()
+const requestStore = useRequestStore()
 
 type AuthType = HttpAuth['type'] | 'inherit'
 
@@ -330,26 +332,25 @@ function syncOAuth2ConfigToAuthStore() {
   }
 }
 
-// OAuth2 Authorization flow
+// OAuth2 Authorization flow - opens sidebar with iframe
 async function initiateAuth() {
   if (!props.requestId) {
     authError.value = 'Request ID is required for OAuth2 authorization'
     return
   }
-  
+
   isAuthorizing.value = true
   authError.value = null
-  
+
   try {
     const oauth2 = localAuth.value.oauth2
     if (!oauth2) return
-    
+
     // Sync config to authStore so token gets applied when executing requests
     syncOAuth2ConfigToAuthStore()
-    
-    // Resolve environment variables in all OAuth2 fields
+
     if (isAuthCodeGrant.value) {
-      await authService.initiateAuthCodeFlow(props.requestId, {
+      const config = {
         authorizationUrl: resolve(oauth2.authorizationUrl),
         tokenUrl: resolve(oauth2.accessTokenUrl),
         clientId: resolve(oauth2.clientId),
@@ -358,8 +359,18 @@ async function initiateAuth() {
         scope: resolve(oauth2.scope),
         audience: resolve(oauth2.audience),
         usePkce: oauth2.usePkce ?? true,
-      })
+      }
+
+      // Prepare auth flow and open sidebar
+      const { authUrl, state } = await authService.prepareAuthCodeFlow(props.requestId, config)
+      requestStore.setOAuthState(authUrl, state, props.requestId, false)
+      requestStore.setExecutionPhase('authorizing')
+
+      // Wait for callback
+      await authService.waitForAuthCallback(props.requestId, state)
+      requestStore.setExecutionPhase('idle')
     } else if (isImplicitGrant.value) {
+      // Implicit flow uses popup (deprecated flow)
       await authService.initiateImplicitFlow(props.requestId, {
         authorizationUrl: resolve(oauth2.authorizationUrl),
         clientId: resolve(oauth2.clientId),
@@ -369,6 +380,7 @@ async function initiateAuth() {
     }
   } catch (error) {
     authError.value = error instanceof Error ? error.message : 'Authorization failed'
+    requestStore.setExecutionPhase('idle')
   } finally {
     isAuthorizing.value = false
   }

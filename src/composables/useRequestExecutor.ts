@@ -244,25 +244,34 @@ export function useRequestExecutor() {
         // Check if we can auto-reauth with authorization code flow
         const config = authStore.getAuthConfig(request.id, fileId)
         if (config?.type === 'oauth2-authorization-code' && config.oauth2AuthorizationCode) {
-          requestLogger.info('401 Unauthorized - attempting auto-reauth with Authorization Code flow')
-          requestStore.setExecutionPhase('authenticating')
-          
+          requestLogger.info('401 Unauthorized - attempting auto-reauth with Authorization Code flow (iframe)')
+
           try {
             // Determine the token cache key
             const authSource = authStore.getAuthConfigSource(request.id, fileId)
             const tokenKey = authSource === 'file' && fileId ? `file:${fileId}` : request.id
-            
-            // Clear existing token and initiate auth flow (shows popup)
+
+            // Clear existing token
             authStore.clearCachedToken(tokenKey)
-            await authService.initiateAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
-            
+
+            // Prepare auth flow (generates URL, state, PKCE) without opening popup
+            const { authUrl, state } = await authService.prepareAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
+
+            // Set OAuth state in request store and switch to authorizing phase
+            // This will show the auth tab with iframe in ResponseViewer
+            requestStore.setOAuthState(authUrl, state, tokenKey, false)
+            requestStore.setExecutionPhase('authorizing')
+
+            // Wait for callback (iframe or popup fallback handled by OAuthIframeView)
+            await authService.waitForAuthCallback(tokenKey, state)
+
             requestLogger.info('Re-authentication successful, retrying request')
             requestLogger.groupEnd()
-            
+
             // Reset executing state so retry can proceed
             isExecuting.value = false
             stopFunnyTextRotation()
-            
+
             // Retry the request with the new token
             return executeRequest(request, fileId, true)
           } catch (authError) {
@@ -280,9 +289,9 @@ export function useRequestExecutor() {
           }
         } else {
           // No auth code flow configured, show normal 401 error
-          requestLogger.warn('Phase 3: HTTP Error (no auto-reauth available)', { 
-            status: executionResponse.status, 
-            statusText: executionResponse.statusText 
+          requestLogger.warn('Phase 3: HTTP Error (no auto-reauth available)', {
+            status: executionResponse.status,
+            statusText: executionResponse.statusText
           })
           requestStore.executionState.error = {
             message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,

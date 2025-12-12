@@ -159,11 +159,11 @@ function isHeaderRevealed(key: string): boolean {
         <!-- Tabs -->
         <div class="flex gap-1" @click.stop>
           <!-- Request tab (always available when there's a sent request) -->
-          <button 
+          <button
             class="px-3 py-1 text-xs font-mono uppercase tracking-wider rounded transition-colors"
             :class="[
-              activeTab === 'request' 
-                ? 'bg-[var(--color-secondary)] text-[var(--color-bg)]' 
+              activeTab === 'request'
+                ? 'bg-[var(--color-secondary)] text-[var(--color-bg)]'
                 : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg)]',
               !hasSentRequest ? 'opacity-50 cursor-not-allowed' : ''
             ]"
@@ -172,15 +172,15 @@ function isHeaderRevealed(key: string): boolean {
           >
             request
           </button>
-          
+
           <!-- Response tabs -->
-          <button 
+          <button
             v-for="tab in (['json', 'raw', 'table', 'headers', 'timing'] as ViewTab[])"
             :key="tab"
             class="px-3 py-1 text-xs font-mono uppercase tracking-wider rounded transition-colors"
             :class="[
-              activeTab === tab 
-                ? 'bg-[var(--color-primary)] text-[var(--color-bg)]' 
+              activeTab === tab
+                ? 'bg-[var(--color-primary)] text-[var(--color-bg)]'
                 : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg)]',
               tab === 'table' && !canShowTable ? 'opacity-50 cursor-not-allowed' : '',
               !hasResponse ? 'opacity-50 cursor-not-allowed' : ''

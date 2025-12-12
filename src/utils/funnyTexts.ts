@@ -51,6 +51,23 @@ export const authTexts: string[] = [
   'Exchanging secrets...',
 ]
 
+// Texts for OAuth authorization phase (user login)
+export const authorizingTexts: string[] = [
+  'Awaiting your login...',
+  'Complete the sign-in below...',
+  'Waiting for authorization...',
+  'Sign in to continue...',
+  'Authenticate to proceed...',
+  'Your credentials, please...',
+  'Access portal opened...',
+  'Identity verification required...',
+  'Waiting for your approval...',
+  'Login to unlock the API...',
+  'OAuth dance in progress...',
+  'Redirect intercepted...',
+  'Token exchange pending...',
+]
+
 // Success messages
 export const successTexts: string[] = [
   'Mission accomplished!',
@@ -89,6 +106,10 @@ export function getRandomFetchingText(): string {
 
 export function getRandomAuthText(): string {
   return getRandomText(authTexts)
+}
+
+export function getRandomAuthorizingText(): string {
+  return getRandomText(authorizingTexts)
 }
 
 export function getRandomSuccessText(): string {
