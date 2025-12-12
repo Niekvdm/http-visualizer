@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js'
+import { Container, Graphics, Text, TextStyle, Ticker, RenderTexture, Sprite } from 'pixi.js'
 import { Viewport } from 'pixi-viewport'
 import type { ExecutionPhase, ParsedRequest, RedirectHop } from '@/types'
 import type {
@@ -69,7 +69,8 @@ export class BlueprintMode extends Container implements IPresentationMode {
   private backgroundGraphics: Graphics
   private gridGraphics: Graphics
   private componentsGraphics: Graphics
-  private connectionsGraphics: Graphics
+  private staticConnectionsGraphics: Graphics // Static connections (not animating)
+  private connectionsGraphics: Graphics // Animated connections (redrawn each frame)
   private annotationsGraphics: Graphics
   private labelsContainer: Container
 
@@ -93,6 +94,25 @@ export class BlueprintMode extends Container implements IPresentationMode {
   private connectionSpeed: number = 0.015
   private dashOffset: number = 0
   private fpsText: Text | null = null
+  private fpsUpdateCounter: number = 0
+
+  // Dirty flags for selective redrawing
+  private dirtyFlags = {
+    frame: true,
+    grid: true,
+    components: true,
+    connections: true,
+  }
+
+  // Grid caching
+  private gridTexture: RenderTexture | null = null
+  private gridSprite: Sprite | null = null
+
+  // Text pooling
+  private textPool: Text[] = []
+  private activeTexts: Text[] = []
+  private activeConnectionTexts: Text[] = [] // Separate tracking for connection labels
+  private styleCache: Map<string, TextStyle> = new Map()
 
   // Event callback
   private onEvent: ((event: PresentationModeEvent) => void) | null = null
@@ -169,6 +189,9 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.gridGraphics = new Graphics()
     this.viewport.addChild(this.gridGraphics)
 
+    this.staticConnectionsGraphics = new Graphics()
+    this.viewport.addChild(this.staticConnectionsGraphics)
+
     this.connectionsGraphics = new Graphics()
     this.viewport.addChild(this.connectionsGraphics)
 
@@ -189,7 +212,11 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.viewport.on('dblclick', () => this.resetView())
 
     // Redraw on zoom to update scale indicator
-    this.viewport.on('zoomed', () => this.drawFrame())
+    this.viewport.on('zoomed', () => {
+      this.markDirty({ frame: true })
+      this.drawFrame()
+      this.dirtyFlags.frame = false
+    })
 
     // Start animation ticker
     this.ticker = new Ticker()
@@ -222,13 +249,119 @@ export class BlueprintMode extends Container implements IPresentationMode {
     })
   }
 
+  // Mark specific elements as needing redraw
+  private markDirty(flags: Partial<typeof this.dirtyFlags>) {
+    Object.assign(this.dirtyFlags, flags)
+  }
+
+  // Mark all elements as dirty (full redraw)
+  private markAllDirty() {
+    this.dirtyFlags.frame = true
+    this.dirtyFlags.grid = true
+    this.dirtyFlags.components = true
+    this.dirtyFlags.connections = true
+  }
+
+  // Get a cached TextStyle or create a new one
+  private getCachedStyle(key: string, createStyle: () => TextStyle): TextStyle {
+    let style = this.styleCache.get(key)
+    if (!style) {
+      style = createStyle()
+      this.styleCache.set(key, style)
+    }
+    return style
+  }
+
+  // Get a Text object from the pool or create a new one
+  private getPooledText(content: string, style: TextStyle): Text {
+    let text: Text
+    if (this.textPool.length > 0) {
+      text = this.textPool.pop()!
+      text.text = content
+      text.style = style
+      text.alpha = 1
+      text.anchor.set(0, 0)
+      text.visible = true
+    } else {
+      text = new Text({ text: content, style })
+    }
+    this.activeTexts.push(text)
+    return text
+  }
+
+  // Return all active texts to the pool
+  private recycleTexts() {
+    for (const text of this.activeTexts) {
+      text.visible = false
+      if (text.parent) {
+        text.parent.removeChild(text)
+      }
+      this.textPool.push(text)
+    }
+    this.activeTexts = []
+  }
+
+  // Return only connection texts to the pool (for animation redraws)
+  private recycleConnectionTexts() {
+    for (const text of this.activeConnectionTexts) {
+      text.visible = false
+      if (text.parent) {
+        text.parent.removeChild(text)
+      }
+      this.textPool.push(text)
+    }
+    this.activeConnectionTexts = []
+  }
+
+  // Get a pooled text for connection labels (tracked separately)
+  private getPooledConnectionText(content: string, style: TextStyle): Text {
+    let text: Text
+    if (this.textPool.length > 0) {
+      text = this.textPool.pop()!
+      text.text = content
+      text.style = style
+      text.alpha = 1
+      text.anchor.set(0, 0)
+      text.visible = true
+    } else {
+      text = new Text({ text: content, style })
+    }
+    this.activeConnectionTexts.push(text)
+    return text
+  }
+
+  // Invalidate grid cache (call on resize or color change)
+  private invalidateGridCache() {
+    if (this.gridTexture) {
+      this.gridTexture.destroy(true)
+      this.gridTexture = null
+    }
+    if (this.gridSprite) {
+      this.gridSprite.destroy()
+      this.gridSprite = null
+    }
+    this.dirtyFlags.grid = true
+  }
+
   private draw() {
-    this.drawFrame()
+    if (this.dirtyFlags.frame) {
+      this.drawFrame()
+      this.dirtyFlags.frame = false
+    }
     this.drawBackground()
-    this.drawGrid()
+    if (this.dirtyFlags.grid) {
+      this.drawGrid()
+      this.dirtyFlags.grid = false
+    }
+    // Connections are always redrawn during animation (dash offset changes)
     this.drawConnections()
-    this.drawComponents()
+    if (this.dirtyFlags.components) {
+      this.drawComponents()
+      this.dirtyFlags.components = false
+    }
     this.drawAnnotations()
+    // Clear connections dirty flag after full draw
+    this.dirtyFlags.connections = false
   }
 
   // Draw static frame elements (outside viewport - doesn't zoom)
@@ -457,16 +590,18 @@ export class BlueprintMode extends Container implements IPresentationMode {
     const { width, height } = this.options
 
     this.componentsGraphics.clear()
-    this.labelsContainer.removeChildren()
+
+    // Recycle all texts back to pool before redrawing
+    this.recycleTexts()
 
     if (this.state === 'idle') {
-      const style = new TextStyle({
+      const style = this.getCachedStyle('idle-text', () => new TextStyle({
         fontFamily: 'Share Tech Mono, monospace',
         fontSize: 16,
         fill: this.BLUEPRINT_TEXT,
         align: 'center',
-      })
-      const text = new Text({ text: 'SELECT REQUEST TO VIEW SCHEMATIC', style })
+      }))
+      const text = this.getPooledText('SELECT REQUEST TO VIEW SCHEMATIC', style)
       text.anchor.set(0.5)
       text.x = width / 2
       text.y = height / 2
@@ -514,13 +649,14 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
     // Header label
     const headerColor = comp.type === 'redirect' ? REDIRECT_COLOR : this.BLUEPRINT_ACCENT
-    const headerStyle = new TextStyle({
+    const headerStyleKey = comp.type === 'redirect' ? 'header-redirect' : 'header-normal'
+    const headerStyle = this.getCachedStyle(headerStyleKey, () => new TextStyle({
       fontFamily: 'Share Tech Mono, monospace',
       fontSize: comp.type === 'redirect' ? 9 : 10,
       fill: headerColor,
       fontWeight: 'bold',
-    })
-    const header = new Text({ text: comp.label, style: headerStyle })
+    }))
+    const header = this.getPooledText(comp.label, headerStyle)
     header.x = comp.x + 8
     header.y = comp.y + (comp.type === 'redirect' ? 3 : 6)
     this.labelsContainer.addChild(header)
@@ -536,15 +672,16 @@ export class BlueprintMode extends Container implements IPresentationMode {
     const dataStartY = comp.type === 'redirect' ? 22 : 32
     const maxChars = comp.type === 'redirect' ? 16 : 25
 
-    const dataStyle = new TextStyle({
+    const dataStyleKey = comp.type === 'redirect' ? 'data-redirect' : 'data-normal'
+    const dataStyle = this.getCachedStyle(dataStyleKey, () => new TextStyle({
       fontFamily: 'Fira Code, monospace',
       fontSize: dataFontSize,
       fill: this.BLUEPRINT_TEXT,
-    })
+    }))
 
     comp.data.forEach((line, i) => {
       const truncated = line.length > maxChars ? line.slice(0, maxChars - 2) + '..' : line
-      const text = new Text({ text: truncated, style: dataStyle })
+      const text = this.getPooledText(truncated, dataStyle)
       text.x = comp.x + 8
       text.y = comp.y + dataStartY + i * dataLineHeight
       this.labelsContainer.addChild(text)
@@ -596,13 +733,14 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.componentsGraphics.stroke({ color, alpha: 0.6, width: 1 })
 
     // Designator text
-    const style = new TextStyle({
+    const styleKey = `ref-designator-${color}`
+    const style = this.getCachedStyle(styleKey, () => new TextStyle({
       fontFamily: 'Share Tech Mono, monospace',
       fontSize: 8,
       fill: color,
       fontWeight: 'bold',
-    })
-    const text = new Text({ text: comp.refDesignator!, style })
+    }))
+    const text = this.getPooledText(comp.refDesignator!, style)
     text.anchor.set(0.5)
     text.x = x
     text.y = y
@@ -660,12 +798,12 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.annotationsGraphics.fill({ color: this.BLUEPRINT_LINE, alpha: 0.5 })
 
     // Label
-    const style = new TextStyle({
+    const style = this.getCachedStyle('dimension-label', () => new TextStyle({
       fontFamily: 'Fira Code, monospace',
       fontSize: 8,
       fill: this.BLUEPRINT_LINE,
-    })
-    const text = new Text({ text: label, style })
+    }))
+    const text = this.getPooledText(label, style)
     text.anchor.set(0.5, 0)
     text.x = (x1 + x2) / 2
     text.y = y1 + 3
@@ -673,7 +811,17 @@ export class BlueprintMode extends Container implements IPresentationMode {
   }
 
   private drawConnections() {
+    // Always clear animated connections layer
     this.connectionsGraphics.clear()
+    // Recycle connection-specific texts before redrawing
+    this.recycleConnectionTexts()
+
+    // Only redraw static connections if dirty
+    const needsStaticRedraw = this.dirtyFlags.connections
+    if (needsStaticRedraw) {
+      this.staticConnectionsGraphics.clear()
+    }
+
     const REDIRECT_COLOR = 0xf39c12 // Orange for redirects
 
     for (const conn of this.connections) {
@@ -703,57 +851,87 @@ export class BlueprintMode extends Container implements IPresentationMode {
         endX, endY, toPort.side
       )
 
-      // Draw orthogonal path with progress
-      this.drawOrthogonalPath(segments, conn.progress, conn.animated, lineColor)
+      // Determine if this connection is static (no animation needed)
+      const isStatic = !conn.animated
 
-      // Draw corner markers at 90° turns
-      if (conn.progress >= 1) {
-        this.drawCornerMarkers(segments, lineColor)
+      // Static connections: draw once to static layer
+      if (isStatic) {
+        if (needsStaticRedraw) {
+          this.drawOrthogonalPathToGraphics(this.staticConnectionsGraphics, segments, conn.progress, false, lineColor)
+
+          // Draw corner markers at 90° turns
+          if (conn.progress >= 1) {
+            this.drawCornerMarkersToGraphics(this.staticConnectionsGraphics, segments, lineColor)
+          }
+
+          // Draw arrowhead if complete
+          if (conn.progress >= 1 && segments.length > 0) {
+            this.drawArrowheadToGraphics(this.staticConnectionsGraphics, segments, endX, endY, lineColor)
+          }
+        }
+      } else {
+        // Animated connections: draw to animated layer every frame
+        this.drawOrthogonalPathToGraphics(this.connectionsGraphics, segments, conn.progress, true, lineColor)
+
+        // Draw corner markers at 90° turns
+        if (conn.progress >= 1) {
+          this.drawCornerMarkersToGraphics(this.connectionsGraphics, segments, lineColor)
+        }
+
+        // Draw arrowhead if complete
+        if (conn.progress >= 1 && segments.length > 0) {
+          this.drawArrowheadToGraphics(this.connectionsGraphics, segments, endX, endY, lineColor)
+        }
+
+        // Animated dot at connection head
+        if (conn.progress < 1) {
+          const pos = this.getPositionAlongPath(segments, conn.progress)
+          this.connectionsGraphics.circle(pos.x, pos.y, 4)
+          this.connectionsGraphics.fill({ color: lineColor, alpha: 1 })
+        }
       }
 
-      // Draw arrowhead if complete
-      if (conn.progress >= 1 && segments.length > 0) {
-        const lastSeg = segments[segments.length - 1]
-        const angle = Math.atan2(lastSeg.y2 - lastSeg.y1, lastSeg.x2 - lastSeg.x1)
-        const arrowSize = 8
-
-        this.connectionsGraphics.moveTo(endX, endY)
-        this.connectionsGraphics.lineTo(
-          endX - arrowSize * Math.cos(angle - Math.PI / 6),
-          endY - arrowSize * Math.sin(angle - Math.PI / 6)
-        )
-        this.connectionsGraphics.lineTo(
-          endX - arrowSize * Math.cos(angle + Math.PI / 6),
-          endY - arrowSize * Math.sin(angle + Math.PI / 6)
-        )
-        this.connectionsGraphics.closePath()
-        this.connectionsGraphics.fill({ color: lineColor, alpha: 0.9 })
-      }
-
-      // Connection label (at midpoint of path)
+      // Connection label (at midpoint of path) - always goes to labels container
       if (conn.label && conn.progress > 0.5) {
         const midPoint = this.getPathMidpoint(segments)
 
-        const style = new TextStyle({
+        const styleKey = `conn-label-${lineColor}`
+        const style = this.getCachedStyle(styleKey, () => new TextStyle({
           fontFamily: 'Fira Code, monospace',
           fontSize: 9,
           fill: lineColor,
-        })
-        const text = new Text({ text: conn.label, style })
+        }))
+        const text = this.getPooledConnectionText(conn.label, style)
         text.anchor.set(0.5)
         text.x = midPoint.x
         text.y = midPoint.y - 12
         text.alpha = (conn.progress - 0.5) * 2
         this.labelsContainer.addChild(text)
       }
-
-      // Animated dot at connection head
-      if (conn.animated && conn.progress < 1) {
-        const pos = this.getPositionAlongPath(segments, conn.progress)
-        this.connectionsGraphics.circle(pos.x, pos.y, 4)
-        this.connectionsGraphics.fill({ color: lineColor, alpha: 1 })
-      }
     }
+  }
+
+  // Draw arrowhead to a specific graphics object
+  private drawArrowheadToGraphics(
+    graphics: Graphics,
+    segments: { x1: number; y1: number; x2: number; y2: number }[],
+    endX: number, endY: number, color: number
+  ) {
+    const lastSeg = segments[segments.length - 1]
+    const angle = Math.atan2(lastSeg.y2 - lastSeg.y1, lastSeg.x2 - lastSeg.x1)
+    const arrowSize = 8
+
+    graphics.moveTo(endX, endY)
+    graphics.lineTo(
+      endX - arrowSize * Math.cos(angle - Math.PI / 6),
+      endY - arrowSize * Math.sin(angle - Math.PI / 6)
+    )
+    graphics.lineTo(
+      endX - arrowSize * Math.cos(angle + Math.PI / 6),
+      endY - arrowSize * Math.sin(angle + Math.PI / 6)
+    )
+    graphics.closePath()
+    graphics.fill({ color, alpha: 0.9 })
   }
 
   // Calculate orthogonal (Manhattan) path between two points
@@ -824,8 +1002,9 @@ export class BlueprintMode extends Container implements IPresentationMode {
     return segments
   }
 
-  // Draw orthogonal path with progress animation
-  private drawOrthogonalPath(
+  // Draw orthogonal path with progress animation to a specific graphics object
+  private drawOrthogonalPathToGraphics(
+    graphics: Graphics,
     segments: { x1: number; y1: number; x2: number; y2: number }[],
     progress: number,
     animated: boolean,
@@ -853,14 +1032,18 @@ export class BlueprintMode extends Container implements IPresentationMode {
       const endY = seg.y1 + (seg.y2 - seg.y1) * segProgress
 
       // Draw dashed segment
-      this.drawDashedLineSegment(seg.x1, seg.y1, endX, endY, animated, color)
+      this.drawDashedLineSegmentToGraphics(graphics, seg.x1, seg.y1, endX, endY, animated, color)
 
       drawnLength += segLength
     }
   }
 
-  // Draw a single dashed line segment (H or V only)
-  private drawDashedLineSegment(x1: number, y1: number, x2: number, y2: number, animated: boolean, color: number) {
+  // Draw a single dashed line segment (H or V only) to a specific graphics object
+  private drawDashedLineSegmentToGraphics(
+    graphics: Graphics,
+    x1: number, y1: number, x2: number, y2: number,
+    animated: boolean, color: number
+  ) {
     const dashLength = 8
     const gapLength = 4
     const totalLength = Math.abs(x2 - x1) + Math.abs(y2 - y1)
@@ -873,6 +1056,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
     const offset = animated ? this.dashOffset : 0
     let currentPos = offset % (dashLength + gapLength)
 
+    // Batch all dashes before stroking
     while (currentPos < totalLength) {
       const dashStart = currentPos
       const dashEnd = Math.min(currentPos + dashLength, totalLength)
@@ -892,23 +1076,25 @@ export class BlueprintMode extends Container implements IPresentationMode {
           ey = y1 + dashEnd * direction
         }
 
-        this.connectionsGraphics.moveTo(sx, sy)
-        this.connectionsGraphics.lineTo(ex, ey)
-        this.connectionsGraphics.stroke({ color, alpha: 0.8, width: 2 })
+        graphics.moveTo(sx, sy)
+        graphics.lineTo(ex, ey)
       }
 
       currentPos += dashLength + gapLength
     }
+    // Single stroke call for all dashes in this segment
+    graphics.stroke({ color, alpha: 0.8, width: 2 })
   }
 
-  // Draw corner markers at 90° turns
-  private drawCornerMarkers(
+  // Draw corner markers at 90° turns to a specific graphics object
+  private drawCornerMarkersToGraphics(
+    graphics: Graphics,
     segments: { x1: number; y1: number; x2: number; y2: number }[],
     color: number
   ) {
+    // Batch all corner markers before a single stroke
     for (let i = 0; i < segments.length - 1; i++) {
       const seg1 = segments[i]
-      const seg2 = segments[i + 1]
 
       // Corner is at end of seg1 / start of seg2
       const cornerX = seg1.x2
@@ -916,8 +1102,11 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
       // Draw small tick mark at corner
       const tickSize = 3
-      this.connectionsGraphics.circle(cornerX, cornerY, tickSize)
-      this.connectionsGraphics.stroke({ color, alpha: 0.6, width: 1 })
+      graphics.circle(cornerX, cornerY, tickSize)
+    }
+    // Single stroke for all corners
+    if (segments.length > 1) {
+      graphics.stroke({ color, alpha: 0.6, width: 1 })
     }
   }
 
@@ -969,24 +1158,30 @@ export class BlueprintMode extends Container implements IPresentationMode {
     // Update viewport (for deceleration/animations)
     this.viewport.update(this.ticker.deltaMS)
 
-    // Update FPS counter
-    if (this.fpsText) {
+    // Throttle FPS counter updates to every 10 frames
+    if (this.fpsText && ++this.fpsUpdateCounter >= 10) {
       this.fpsText.text = `FPS: ${Math.round(this.ticker.FPS)}`
+      this.fpsUpdateCounter = 0
     }
 
-    let needsRedraw = false
+    // Check if any connections are animating
+    const hasAnimatingConnections = this.connections.some(c => c.animated && c.progress < 1)
+    const hasAnimatedConnections = this.connections.some(c => c.animated)
 
-    // Update dash animation
-    this.dashOffset += 0.5
-    for (const conn of this.connections) {
-      if (conn.animated && conn.progress < 1) {
-        conn.progress = Math.min(1, conn.progress + this.connectionSpeed)
-        needsRedraw = true
+    // Update connection progress
+    if (hasAnimatingConnections) {
+      for (const conn of this.connections) {
+        if (conn.animated && conn.progress < 1) {
+          conn.progress = Math.min(1, conn.progress + this.connectionSpeed)
+        }
       }
     }
 
-    if (needsRedraw || this.connections.some(c => c.animated)) {
-      this.draw()
+    // Only redraw if there are animated connections (dash offset animation)
+    if (hasAnimatedConnections) {
+      this.dashOffset += 0.5
+      // Only redraw connections, not entire scene
+      this.drawConnections()
     }
   }
 
@@ -1337,6 +1532,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
       this.setupComponents()
     }
 
+    this.markAllDirty()
     this.draw()
   }
 
@@ -1347,6 +1543,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
         this.responseData = null
         this.errorMessage = null
         this.setupComponents()
+        this.markAllDirty()
         break
 
       case 'authenticating':
@@ -1357,14 +1554,17 @@ export class BlueprintMode extends Container implements IPresentationMode {
           this.connections[this.connections.length - 1].animated = true
           this.connections[this.connections.length - 1].progress = 0
         }
+        this.markDirty({ connections: true })
         break
 
       case 'success':
         this.state = 'complete'
+        this.markDirty({ frame: true })
         break
 
       case 'error':
         this.state = 'error'
+        this.markDirty({ frame: true })
         break
     }
 
@@ -1379,6 +1579,9 @@ export class BlueprintMode extends Container implements IPresentationMode {
       this.redirectChain = extendedData.redirectChain
       // Rebuild components to include redirects
       this.setupComponents()
+      this.markAllDirty()
+    } else {
+      this.markDirty({ frame: true, components: true, connections: true })
     }
 
     this.setupResponseComponent()
@@ -1388,6 +1591,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
   public setError(message: string) {
     this.errorMessage = message
     this.setupResponseComponent()
+    this.markDirty({ frame: true, components: true, connections: true })
     this.draw()
   }
 
@@ -1399,6 +1603,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
     if (this.responseData || this.errorMessage) {
       this.setupResponseComponent()
     }
+    this.markAllDirty()
     this.draw()
   }
 
@@ -1425,10 +1630,14 @@ export class BlueprintMode extends Container implements IPresentationMode {
       this.fpsText.x = width - 25
     }
 
+    // Invalidate grid cache on resize
+    this.invalidateGridCache()
+
     this.setupComponents()
     if (this.responseData || this.errorMessage) {
       this.setupResponseComponent()
     }
+    this.markAllDirty()
     this.draw()
   }
 
@@ -1444,6 +1653,8 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.options.bgColor = bgColor
     this.options.textColor = textColor
     this.options.errorColor = errorColor
+    this.invalidateGridCache()
+    this.markAllDirty()
     this.draw()
   }
 
@@ -1485,10 +1696,30 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.backgroundGraphics.destroy()
     this.gridGraphics.destroy()
     this.componentsGraphics.destroy()
+    this.staticConnectionsGraphics.destroy()
     this.connectionsGraphics.destroy()
     this.annotationsGraphics.destroy()
     this.labelsContainer.destroy()
     this.viewport.destroy()
+
+    // Clean up grid cache
+    this.invalidateGridCache()
+
+    // Clean up text pool
+    for (const text of this.textPool) {
+      text.destroy()
+    }
+    this.textPool = []
+    for (const text of this.activeTexts) {
+      text.destroy()
+    }
+    this.activeTexts = []
+    for (const text of this.activeConnectionTexts) {
+      text.destroy()
+    }
+    this.activeConnectionTexts = []
+    this.styleCache.clear()
+
     super.destroy()
   }
 }
