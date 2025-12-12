@@ -36,6 +36,9 @@ export interface ExtendedResponseData {
   sizeBreakdown?: SizeBreakdown
   tls?: TlsInfo
   redirectChain?: RedirectHop[]
+  protocol?: string
+  serverIP?: string
+  fromCache?: boolean
 }
 
 /**

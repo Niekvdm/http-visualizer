@@ -196,6 +196,11 @@ watch(() => requestStore.executionState, (state) => {
   dataFlowGraph.setPhase(state.phase, state.funnyText)
 
   if (state.phase === 'success' && state.response) {
+    // Set redirect chain first (before response, so layout is correct)
+    if (state.response.redirectChain && state.response.redirectChain.length > 0) {
+      dataFlowGraph.setRedirectChain(state.response.redirectChain)
+    }
+
     dataFlowGraph.setResponse(
       state.response.status,
       state.response.statusText,

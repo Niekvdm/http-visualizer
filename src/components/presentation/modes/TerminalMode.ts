@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, TextStyle, BlurFilter } from 'pixi.js'
 import type { ExecutionPhase, ParsedRequest } from '@/types'
+import type { ExtendedResponseData } from './IPresentationMode'
 import { resolveVariables } from '@/utils/variableResolver'
 
 export interface TerminalModeOptions {
@@ -629,17 +630,100 @@ export class TerminalMode extends Container {
   }
 
   // Called when response is received
-  public setResponse(status: number, statusText: string, size: number, duration: number) {
+  public setResponse(status: number, statusText: string, size: number, duration: number, extendedData?: ExtendedResponseData) {
     this.stateAfterTyping = 'waiting-response'
-    
+
+    // Show redirect chain first if present
+    if (extendedData?.redirectChain && extendedData.redirectChain.length > 0) {
+      this.typeLine('', 'output')
+      this.typeLine('─'.repeat(35), 'info')
+      this.typeLine(`REDIRECTS: (${extendedData.redirectChain.length} hops)`, 'info')
+
+      extendedData.redirectChain.forEach((hop, index) => {
+        const hopUrl = this.truncateUrl(hop.url, 45)
+        const statusColor = hop.status >= 300 && hop.status < 400 ? 'command' : 'output'
+        this.typeLine(`  ${index + 1}. [${hop.status}] ${hopUrl}`, statusColor)
+        if (hop.duration > 0) {
+          this.typeLine(`     └─ ${hop.duration.toFixed(0)}ms`, 'info')
+        }
+      })
+    }
+
     this.typeLine('', 'output')
     this.typeLine('─'.repeat(35), 'info')
     this.typeLine('RESPONSE:', 'info')
-    
+
     const statusType = status >= 200 && status < 300 ? 'success' : 'error'
     this.typeLine(`  Status: ${status} ${statusText}`, statusType)
     this.typeLine(`  Size: ${this.formatBytes(size)}`, 'output')
     this.typeLine(`  Time: ${duration.toFixed(0)}ms`, 'output')
+
+    // Show extended timing breakdown if available
+    if (extendedData?.timing) {
+      const { timing } = extendedData
+      this.typeLine('', 'output')
+      this.typeLine('  Timing Breakdown:', 'info')
+      if (timing.dns !== undefined && timing.dns > 0) {
+        this.typeLine(`    DNS:      ${timing.dns.toFixed(0)}ms`, 'output')
+      }
+      if (timing.tcp !== undefined && timing.tcp > 0) {
+        this.typeLine(`    TCP:      ${timing.tcp.toFixed(0)}ms`, 'output')
+      }
+      if (timing.tls !== undefined && timing.tls > 0) {
+        this.typeLine(`    TLS:      ${timing.tls.toFixed(0)}ms`, 'output')
+      }
+      if (timing.ttfb !== undefined && timing.ttfb > 0) {
+        this.typeLine(`    TTFB:     ${timing.ttfb.toFixed(0)}ms`, 'output')
+      }
+      if (timing.download !== undefined && timing.download > 0) {
+        this.typeLine(`    Download: ${timing.download.toFixed(0)}ms`, 'output')
+      }
+    }
+
+    // Show size breakdown if available
+    if (extendedData?.sizeBreakdown) {
+      const { sizeBreakdown } = extendedData
+      this.typeLine('', 'output')
+      this.typeLine('  Size Breakdown:', 'info')
+      this.typeLine(`    Headers: ${this.formatBytes(sizeBreakdown.headers)}`, 'output')
+      this.typeLine(`    Body:    ${this.formatBytes(sizeBreakdown.body)}`, 'output')
+      if (sizeBreakdown.encoding && sizeBreakdown.encoding !== 'identity') {
+        this.typeLine(`    Encoding: ${sizeBreakdown.encoding}`, 'output')
+        if (sizeBreakdown.compressionRatio !== undefined) {
+          const ratio = ((1 - sizeBreakdown.compressionRatio) * 100).toFixed(0)
+          this.typeLine(`    Compressed: ${ratio}% savings`, 'success')
+        }
+      }
+    }
+
+    // Show TLS info if available
+    if (extendedData?.tls) {
+      const { tls } = extendedData
+      this.typeLine('', 'output')
+      this.typeLine('  TLS/SSL:', 'info')
+      if (tls.protocol) {
+        this.typeLine(`    Protocol: ${tls.protocol}`, 'output')
+      }
+      if (tls.cipher) {
+        this.typeLine(`    Cipher:   ${this.truncateText(tls.cipher, 30)}`, 'output')
+      }
+    }
+
+    // Show connection info
+    if (extendedData?.protocol || extendedData?.serverIP || extendedData?.fromCache) {
+      this.typeLine('', 'output')
+      this.typeLine('  Connection:', 'info')
+      if (extendedData.protocol) {
+        this.typeLine(`    Protocol: ${extendedData.protocol}`, 'output')
+      }
+      if (extendedData.serverIP) {
+        this.typeLine(`    Server:   ${extendedData.serverIP}`, 'output')
+      }
+      if (extendedData.fromCache) {
+        this.typeLine(`    Cached:   Yes`, 'success')
+      }
+    }
+
     this.typeLine('─'.repeat(35), 'info')
     this.typeLine('', 'output')
     this.typeLine('[ Press ENTER to open response ]', 'prompt')
@@ -694,6 +778,11 @@ export class TerminalMode extends Container {
     } catch {
       return url.substring(0, maxLength) + '...'
     }
+  }
+
+  private truncateText(text: string, maxLength: number): string {
+    if (text.length <= maxLength) return text
+    return text.substring(0, maxLength - 3) + '...'
   }
 
   private formatBytes(bytes: number): string {

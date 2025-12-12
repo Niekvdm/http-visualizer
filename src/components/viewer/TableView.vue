@@ -62,30 +62,30 @@ function getCellClass(value: unknown): string {
 </script>
 
 <template>
-  <div class="h-full overflow-auto p-4">
+  <div class="h-full overflow-auto p-2">
     <template v-if="tableData">
-      <table class="w-full border-collapse font-mono text-sm">
+      <table class="w-full border-collapse font-mono text-xs">
         <thead>
           <tr>
-            <th 
-              v-for="header in tableData.headers" 
+            <th
+              v-for="header in tableData.headers"
               :key="header"
-              class="text-left p-2 border-b-2 border-[var(--color-border)] text-[var(--color-primary)] font-bold uppercase text-xs tracking-wider"
+              class="text-left px-2 py-1 border-b border-[var(--color-border)] text-[var(--color-primary)] font-bold uppercase text-[10px] tracking-wider bg-[var(--color-bg-tertiary)]"
             >
               {{ header }}
             </th>
           </tr>
         </thead>
         <tbody>
-          <tr 
-            v-for="(row, i) in tableData.rows" 
+          <tr
+            v-for="(row, i) in tableData.rows"
             :key="i"
-            class="hover:bg-[var(--color-bg-tertiary)] transition-colors"
+            class="hover:bg-[var(--color-bg-tertiary)]"
           >
-            <td 
-              v-for="(cell, j) in row" 
+            <td
+              v-for="(cell, j) in row"
               :key="j"
-              class="p-2 border-b border-[var(--color-border)]"
+              class="px-2 py-0.5 border-b border-[var(--color-border)]/50"
               :class="getCellClass(cell)"
             >
               {{ formatCell(cell) }}
@@ -93,18 +93,18 @@ function getCellClass(value: unknown): string {
           </tr>
         </tbody>
       </table>
-      
-      <div class="mt-4 text-xs text-[var(--color-text-dim)]">
-        {{ tableData.rows.length }} row(s)
+
+      <div class="mt-2 text-[10px] text-[var(--color-text-dim)]">
+        {{ tableData.rows.length }} rows
       </div>
     </template>
-    
+
     <template v-else>
       <div class="flex items-center justify-center h-full text-[var(--color-text-dim)]">
         <div class="text-center">
-          <Table class="w-6 h-6 mx-auto mb-2" />
-          <div>Data cannot be displayed as a table</div>
-          <div class="text-xs mt-1">Try JSON or Raw view instead</div>
+          <Table class="w-5 h-5 mx-auto mb-1.5 opacity-50" />
+          <div class="text-xs">Data cannot be displayed as a table</div>
+          <div class="text-[10px] mt-0.5">Try JSON or Raw view instead</div>
         </div>
       </div>
     </template>

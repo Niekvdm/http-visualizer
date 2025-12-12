@@ -25,6 +25,8 @@ interface LifelineConfig {
   x: number
   label: string
   color: number
+  host?: string  // Original hostname for redirect lifelines
+  redirectIndex?: number  // Index in redirect chain (for matching arrows to lifelines)
 }
 
 interface MessageArrow {
@@ -37,6 +39,7 @@ interface MessageArrow {
   isAnimating: boolean
   waitingToStart: boolean  // True if arrow should wait for previous arrows to complete
   speedUp: boolean  // True if arrow should animate faster (phase completed early)
+  isRedirect: boolean  // True for redirect arrows (animate faster)
   color: number
 }
 
@@ -86,6 +89,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
   private clientLifeline: LifelineConfig | null = null
   private authLifeline: LifelineConfig | null = null
   private serverLifeline: LifelineConfig | null = null
+  private redirectLifelines: LifelineConfig[] = []  // Dynamic redirect server lifelines
 
   // Message arrows
   private arrows: MessageArrow[] = []
@@ -135,15 +139,20 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
   private ticker: Ticker
   private arrowAnimationSpeed: number = 0.02
   private arrowFastSpeed: number = 0.15  // Fast speed when phase completes early
+  private redirectArrowSpeed: number = 0.08  // Faster speed for redirect arrows
 
   // Event callback
   private onEvent: ((event: PresentationModeEvent) => void) | null = null
 
   // Layout constants
   private readonly LIFELINE_WIDTH = 100
-  private readonly HEADER_HEIGHT = 60
+  private readonly HEADER_HEIGHT = 20
   private readonly ARROW_SPACING = 80
+  private readonly REDIRECT_ARROW_SPACING = 35  // Tighter spacing for redirect arrows
   private readonly PADDING = 40
+
+  // Track current Y position for arrows (allows variable spacing)
+  private nextArrowY: number = 140  // HEADER_HEIGHT + PADDING + 40
 
   constructor(options: PresentationModeOptions) {
     super()
@@ -230,9 +239,9 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
 
   private drawLifelines() {
     const { width, height, primaryColor, secondaryColor, textColor } = this.options
-    
+
     this.lifelinesGraphics.clear()
-    
+
     // Clear existing labels
     this.labelsContainer.removeChildren()
 
@@ -253,37 +262,66 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     }
 
     // Calculate lifeline positions
-    const lifelineCount = this.hasAuth ? 3 : 2
+    // Base count: client + server = 2, +1 if auth present, + redirect count
+    const redirectCount = this.redirectLifelines.length
+    const baseCount = this.hasAuth ? 3 : 2
+    const lifelineCount = baseCount + redirectCount
     const totalWidth = width - this.PADDING * 2
     const spacing = totalWidth / (lifelineCount + 1)
 
+    let positionIndex = 1
+
     // Client lifeline (always leftmost)
     this.clientLifeline = {
-      x: this.PADDING + spacing,
+      x: this.PADDING + spacing * positionIndex,
       label: 'CLIENT',
       color: primaryColor,
     }
+    positionIndex++
 
-    // Auth lifeline (middle, if present)
+    // Auth lifeline (if present)
     if (this.hasAuth) {
       this.authLifeline = {
-        x: this.PADDING + spacing * 2,
+        x: this.PADDING + spacing * positionIndex,
         label: 'AUTH',
         color: secondaryColor,
       }
+      positionIndex++
     } else {
       this.authLifeline = null
     }
 
-    // Server lifeline (rightmost)
+    // Redirect lifelines (in order, between client/auth and final server)
+    for (const redirectLifeline of this.redirectLifelines) {
+      redirectLifeline.x = this.PADDING + spacing * positionIndex
+      positionIndex++
+    }
+
+    // Server lifeline (rightmost) - this is the final destination
+    // Show actual hostname with number if we have redirects
+    let serverLabel = 'SERVER'
+    let serverHost: string | undefined
+    if (this.redirectChain.length > 0) {
+      const finalHost = this.extractHost(this.redirectChain[this.redirectChain.length - 1].url)
+      serverLabel = `${this.truncateHost(finalHost, 10).toUpperCase()} #${this.redirectChain.length}`
+      serverHost = finalHost
+    }
+
     this.serverLifeline = {
-      x: this.hasAuth ? this.PADDING + spacing * 3 : this.PADDING + spacing * 2,
-      label: 'SERVER',
+      x: this.PADDING + spacing * positionIndex,
+      label: serverLabel,
       color: primaryColor,
+      host: serverHost,
+      redirectIndex: this.redirectChain.length > 0 ? this.redirectChain.length - 1 : undefined,
     }
 
     // Draw each lifeline
-    const lifelines = [this.clientLifeline, this.authLifeline, this.serverLifeline].filter(Boolean) as LifelineConfig[]
+    const lifelines = [
+      this.clientLifeline,
+      this.authLifeline,
+      ...this.redirectLifelines,
+      this.serverLifeline
+    ].filter(Boolean) as LifelineConfig[]
 
     for (const lifeline of lifelines) {
       // Apply shake offset to server lifeline during error animation
@@ -387,7 +425,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
       if (arrow.label && arrow.progress > 0.5) {
         const labelStyle = new TextStyle({
           fontFamily: 'Fira Code, monospace',
-          fontSize: 10,
+          fontSize: 11,
           fill: textColor,
         })
         const labelText = new Text({ text: arrow.label, style: labelStyle })
@@ -482,6 +520,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     this.tlsInfo = null
     this.sizeBreakdown = null
     this.redirectChain = []
+    this.redirectLifelines = []
   }
 
   private getStatusColor(status: number): number {
@@ -710,8 +749,8 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     const pulseAlpha = 0.4 + 0.2 * Math.sin(this.animationTime * 5)
 
     if (element.type === 'arrow') {
-      // Find the response arrow that's being hovered
-      const responseArrow = this.arrows.find(a => a.type === 'response' && a.progress >= 1)
+      // Find the final response arrow (not a redirect) that's being hovered
+      const responseArrow = this.arrows.find(a => a.type === 'response' && a.progress >= 1 && !a.isRedirect)
       if (responseArrow) {
         const fromX = responseArrow.fromX
         const toX = responseArrow.toX
@@ -739,11 +778,12 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
   private updateInteractiveElements() {
     this.interactiveElements = []
 
-    // Add only response arrows as interactive elements (they open response popup)
+    // Add only the final response arrow as interactive (opens response popup)
+    // Skip redirect response arrows (isRedirect = true)
     for (let i = 0; i < this.arrows.length; i++) {
       const arrow = this.arrows[i]
-      // Only response arrows are clickable, and only after animation completes
-      if (arrow.type !== 'response' || arrow.progress < 1) continue
+      // Only the final response arrow is clickable (not redirects), and only after animation completes
+      if (arrow.type !== 'response' || arrow.progress < 1 || arrow.isRedirect) continue
 
       const minX = Math.min(arrow.fromX, arrow.toX)
       const maxX = Math.max(arrow.fromX, arrow.toX)
@@ -961,8 +1001,13 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
       }
 
       if (arrow.isAnimating && arrow.progress < 1) {
-        // Use fast speed if arrow needs to catch up, normal speed otherwise
-        const speed = arrow.speedUp ? this.arrowFastSpeed : this.arrowAnimationSpeed
+        // Use fast speed if arrow needs to catch up, redirect speed for redirects, normal otherwise
+        let speed = this.arrowAnimationSpeed
+        if (arrow.speedUp) {
+          speed = this.arrowFastSpeed
+        } else if (arrow.isRedirect) {
+          speed = this.redirectArrowSpeed
+        }
         arrow.progress = Math.min(1, arrow.progress + speed)
         needsRedraw = true
 
@@ -1042,10 +1087,14 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     toLifeline: LifelineConfig,
     label: string,
     type: 'request' | 'response' | 'auth',
-    animate: boolean = true
+    animate: boolean = true,
+    useRedirectSpacing: boolean = false
   ): MessageArrow {
-    const baseY = this.HEADER_HEIGHT + this.PADDING + 40
-    const y = baseY + this.arrows.length * this.ARROW_SPACING
+    // Use tracked Y position for variable spacing
+    const y = this.nextArrowY
+
+    // Increment Y for next arrow based on spacing type
+    this.nextArrowY += useRedirectSpacing ? this.REDIRECT_ARROW_SPACING : this.ARROW_SPACING
 
     // Check if there are any arrows still animating - new arrow should wait
     const hasAnimatingArrows = this.arrows.some(a => a.isAnimating || a.waitingToStart)
@@ -1060,6 +1109,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
       isAnimating: animate && !hasAnimatingArrows,  // Only start immediately if no other arrows animating
       waitingToStart: animate && hasAnimatingArrows, // Wait if there are animating arrows
       speedUp: false,
+      isRedirect: false,
       color: type === 'auth' ? this.options.secondaryColor : this.options.primaryColor,
     }
 
@@ -1069,6 +1119,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
 
   private clearArrows() {
     this.arrows = []
+    this.nextArrowY = this.HEADER_HEIGHT + this.PADDING + 40  // Reset Y position
   }
 
   // Speed up all incomplete arrows when phase completes early
@@ -1097,6 +1148,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     this.clearActivationBoxes()
     this.resetErrorAnimation()
     this.clearTimingBars()
+    this.redirectLifelines = []
     this.animationTime = 0
 
     if (!request) {
@@ -1142,6 +1194,7 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
           this.clearArrows()
           this.clearActivationBoxes()
           this.clearTimingBars()
+          this.redirectLifelines = []
           this.resetErrorAnimation()
           this.responseData = null
           this.errorMessage = null
@@ -1217,13 +1270,21 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
       this.sizeBreakdown = extendedData.sizeBreakdown || null
       this.redirectChain = extendedData.redirectChain || []
 
+      // Create redirect lifelines if there are redirects
+      if (this.redirectChain.length > 0) {
+        this.createRedirectLifelines()
+        // Redraw lifelines with new positions before adding redirect arrows
+        this.drawLifelines()
+        this.createRedirectArrows()
+      }
+
       // Create timing bars if we have timing data
       if (this.timingData) {
         this.createTimingBars(this.timingData)
       }
     }
 
-    // Add response arrow
+    // Add final response arrow
     if (this.serverLifeline && this.clientLifeline) {
       const label = `${status} ${statusText} (${duration.toFixed(0)}ms)`
       const arrow = this.createArrow(this.serverLifeline, this.clientLifeline, label, 'response')
@@ -1329,6 +1390,189 @@ export class SequenceDiagramMode extends Container implements IPresentationMode 
     } catch {
       return url.slice(0, maxLength - 3) + '...'
     }
+  }
+
+  private extractHost(url: string): string {
+    try {
+      const parsed = new URL(url)
+      return parsed.hostname
+    } catch {
+      return url
+    }
+  }
+
+  private truncateHost(host: string, maxLength: number = 12): string {
+    if (host.length <= maxLength) return host
+    // Try to show meaningful part of domain
+    const parts = host.split('.')
+    if (parts.length >= 2) {
+      // Show last two parts if possible
+      const lastTwo = parts.slice(-2).join('.')
+      if (lastTwo.length <= maxLength) return lastTwo
+    }
+    return host.slice(0, maxLength - 2) + '..'
+  }
+
+  private createRedirectLifelines() {
+    this.redirectLifelines = []
+
+    if (!this.redirectChain || this.redirectChain.length === 0) return
+
+    // DEBUG MODE: Create a lifeline for each step in the redirect chain
+    // This shows every redirect as a separate lane, even if same host
+
+    const originalUrl = this.currentRequest?.url
+      ? resolveVariables(this.currentRequest.url, this.resolvedVariables)
+      : ''
+    const originalHost = this.extractHost(originalUrl)
+
+    // Add original server lifeline (index -1 to distinguish from redirect hops)
+    this.redirectLifelines.push({
+      x: 0,
+      label: `${this.truncateHost(originalHost, 10).toUpperCase()} #0`,
+      color: 0x9b59b6,
+      host: originalHost,
+      redirectIndex: -1,  // Original server
+    })
+
+    // Add a lifeline for each redirect hop (except the last which becomes SERVER)
+    for (let i = 0; i < this.redirectChain.length - 1; i++) {
+      const hop = this.redirectChain[i]
+      const host = this.extractHost(hop.url)
+
+      this.redirectLifelines.push({
+        x: 0,
+        label: `${this.truncateHost(host, 10).toUpperCase()} #${i + 1}`,
+        color: 0x9b59b6,
+        host: host,
+        redirectIndex: i,
+      })
+    }
+  }
+
+  private createRedirectArrows() {
+    if (!this.redirectChain || this.redirectChain.length === 0) return
+    if (!this.clientLifeline) return
+
+    const originalUrl = this.currentRequest?.url
+      ? resolveVariables(this.currentRequest.url, this.resolvedVariables)
+      : ''
+
+    // Remove the existing request arrow since we'll recreate it with proper flow
+    const existingRequestIdx = this.arrows.findIndex(a => a.type === 'request')
+    if (existingRequestIdx !== -1) {
+      this.arrows.splice(existingRequestIdx, 1)
+    }
+
+    // Get the original server lifeline (index -1)
+    const originalLifeline = this.findLifelineByIndex(-1)
+    if (!originalLifeline) return
+
+    // Create initial request arrow (uses faster redirect speed, tighter spacing)
+    const method = this.currentRequest?.method || 'GET'
+    const requestArrow = this.createArrow(
+      this.clientLifeline,
+      originalLifeline,
+      `${method} ${this.truncateUrl(originalUrl, 25)}`,
+      'request',
+      true,  // animate
+      true   // useRedirectSpacing
+    )
+    requestArrow.color = this.options.primaryColor
+    requestArrow.isRedirect = true  // Use faster animation
+
+    // Create arrows for each redirect hop
+    // Each hop represents a redirect response, potentially followed by a request to a new server
+    let currentLifeline = originalLifeline
+
+    for (let i = 0; i < this.redirectChain.length; i++) {
+      const hop = this.redirectChain[i]
+      const hopHost = this.extractHost(hop.url)
+      const hopLifeline = this.findLifelineByIndex(i)  // Use index-based lookup
+      const isLastHop = i === this.redirectChain.length - 1
+
+      // Redirect response from current server back to client
+      const redirectStatus = hop.status || 302
+      const redirectLabel = hop.opaque
+        ? `${redirectStatus} (opaque)`
+        : `${redirectStatus} → ${this.truncateHost(hopHost, 12)}`
+
+      const redirectArrow = this.createArrow(
+        currentLifeline,
+        this.clientLifeline,
+        redirectLabel,
+        'response',
+        true,  // animate
+        true   // useRedirectSpacing - tighter vertical spacing
+      )
+      redirectArrow.color = 0xf39c12 // Orange for redirects
+      redirectArrow.isRedirect = true  // Use faster animation
+
+      // Add follow-up request to the redirect destination
+      if (hopLifeline) {
+        // For non-last hops, this is an intermediate request
+        // For the last hop, this is the final request before the actual response
+        const nextRequestArrow = this.createArrow(
+          this.clientLifeline,
+          hopLifeline,
+          `GET ${this.truncateHost(hopHost, 20)}`,
+          'request',
+          true,           // animate
+          !isLastHop      // useRedirectSpacing - last request uses normal spacing for visual separation
+        )
+        nextRequestArrow.color = this.options.primaryColor
+        nextRequestArrow.isRedirect = !isLastHop  // Last request before final response uses normal speed
+
+        currentLifeline = hopLifeline
+      }
+    }
+  }
+
+  private findLifelineByIndex(redirectIndex: number): LifelineConfig | null {
+    // redirectIndex: -1 = original server, 0+ = redirect hop index
+    // The last redirect hop (redirectChain.length - 1) maps to serverLifeline
+
+    // Check if this is the final destination (last hop)
+    if (this.redirectChain.length > 0 && redirectIndex === this.redirectChain.length - 1) {
+      return this.serverLifeline
+    }
+
+    // Find matching redirect lifeline by index
+    for (const lifeline of this.redirectLifelines) {
+      if (lifeline.redirectIndex === redirectIndex) return lifeline
+    }
+
+    return null
+  }
+
+  private findLifelineByHost(host: string): LifelineConfig | null {
+    // Check redirect lifelines first
+    for (const lifeline of this.redirectLifelines) {
+      if (lifeline.host === host) return lifeline
+    }
+
+    // Check if it matches the server lifeline's host
+    if (this.serverLifeline?.host === host) {
+      return this.serverLifeline
+    }
+
+    // For redirects, check if host matches the final destination
+    if (this.redirectChain.length > 0) {
+      const finalHost = this.extractHost(this.redirectChain[this.redirectChain.length - 1].url)
+      if (host === finalHost && this.serverLifeline) {
+        return this.serverLifeline
+      }
+    }
+
+    // If no redirects or host matches original URL, use server lifeline
+    const originalHost = this.currentRequest?.url
+      ? this.extractHost(resolveVariables(this.currentRequest.url, this.resolvedVariables))
+      : ''
+    if (host === originalHost && this.serverLifeline) {
+      return this.serverLifeline
+    }
+
+    return null
   }
 
   public destroy() {

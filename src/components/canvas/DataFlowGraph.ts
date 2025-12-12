@@ -3,7 +3,7 @@ import { TerminalNode } from './TerminalNode'
 import { ConnectionLine } from './ConnectionLine'
 import { ResponseBodyCard } from './ResponseBodyCard'
 import { resolveVariables } from '@/utils/variableResolver'
-import type { ExecutionPhase, ParsedRequest, AuthConfig } from '@/types'
+import type { ExecutionPhase, ParsedRequest, AuthConfig, RedirectHop } from '@/types'
 
 export interface DataFlowGraphOptions {
   width: number
@@ -34,6 +34,11 @@ export class DataFlowGraph extends Container {
   private hasResponseBody: boolean = false
   private ticker: Ticker | null = null
 
+  // Redirect chain support
+  private redirectChain: RedirectHop[] = []
+  private redirectNodes: TerminalNode[] = []
+  private redirectLines: ConnectionLine[] = []
+
   // Layout constants
   private readonly nodeWidth = 220
   private readonly nodeHeight = 110
@@ -42,6 +47,14 @@ export class DataFlowGraph extends Container {
   private readonly horizontalSpacing = 60
   private readonly verticalSpacing = 40
   private readonly bodySpacing = 20
+
+  // Redirect node sizing (dynamic based on count)
+  private readonly MAX_VISIBLE_REDIRECTS = 4  // Show summary if more than this
+  private readonly REDIRECT_SIZES = {
+    normal: { width: 120, height: 70, spacing: 25 },    // 1-2 redirects
+    compact: { width: 90, height: 60, spacing: 15 },    // 3-4 redirects
+    summary: { width: 100, height: 60, spacing: 0 },    // 5+ redirects (collapsed)
+  }
 
   constructor(options: DataFlowGraphOptions) {
     super()
@@ -61,6 +74,7 @@ export class DataFlowGraph extends Container {
 
   private updateConnectionLinesFromNodes() {
     const { nodeWidth, nodeHeight, bodyCardWidth } = this
+    const redirectSizing = this.getRedirectSizing()
 
     // Auth to Request line - follows actual node positions during animation
     if (this.authToRequestLine?.visible && this.authNode && this.requestNode) {
@@ -72,14 +86,46 @@ export class DataFlowGraph extends Container {
       )
     }
 
-    // Request to Response line - follows actual node positions during animation
-    if (this.requestToResponseLine?.visible && this.requestNode && this.responseNode) {
-      this.requestToResponseLine.updatePositions(
-        this.requestNode.x + nodeWidth,
-        this.requestNode.y + nodeHeight / 2,
-        this.responseNode.x,
-        this.responseNode.y + nodeHeight / 2
-      )
+    // Request to first redirect (or response if no redirects)
+    if (this.redirectNodes.length > 0) {
+      // Request to first redirect node
+      if (this.requestToResponseLine?.visible && this.requestNode && this.redirectNodes[0]) {
+        this.requestToResponseLine.updatePositions(
+          this.requestNode.x + nodeWidth,
+          this.requestNode.y + nodeHeight / 2,
+          this.redirectNodes[0].x,
+          this.redirectNodes[0].y + redirectSizing.height / 2
+        )
+      }
+
+      // Redirect to redirect lines
+      for (let i = 0; i < this.redirectLines.length; i++) {
+        const line = this.redirectLines[i]
+        if (!line?.visible) continue
+
+        const fromNode = this.redirectNodes[i]
+        const toNode = this.redirectNodes[i + 1] || this.responseNode
+
+        if (fromNode && toNode) {
+          const toHeight = toNode === this.responseNode ? nodeHeight : redirectSizing.height
+          line.updatePositions(
+            fromNode.x + redirectSizing.width,
+            fromNode.y + redirectSizing.height / 2,
+            toNode.x,
+            toNode.y + toHeight / 2
+          )
+        }
+      }
+    } else {
+      // No redirects - Request to Response line
+      if (this.requestToResponseLine?.visible && this.requestNode && this.responseNode) {
+        this.requestToResponseLine.updatePositions(
+          this.requestNode.x + nodeWidth,
+          this.requestNode.y + nodeHeight / 2,
+          this.responseNode.x,
+          this.responseNode.y + nodeHeight / 2
+        )
+      }
     }
 
     // Response to Body line - follows actual node positions during animation
@@ -96,6 +142,16 @@ export class DataFlowGraph extends Container {
   private getLayoutPositions(state: TimelineState) {
     const { width, height } = this.options
     const { nodeWidth, nodeHeight, bodyCardWidth, bodyCardHeight, horizontalSpacing, verticalSpacing, bodySpacing } = this
+
+    // Get dynamic redirect sizing
+    const redirectSizing = this.getRedirectSizing()
+    const redirectCount = this.redirectNodes.length
+
+    // Calculate total width needed for redirect nodes
+    // Use horizontalSpacing for the gap after redirects (same as gap before) for consistency
+    const redirectTotalWidth = redirectCount > 0
+      ? redirectCount * redirectSizing.width + (redirectCount - 1) * redirectSizing.spacing + horizontalSpacing
+      : 0
 
     // Calculate whether body will be visible for this state
     const bodyVisible = this.hasResponseBody && (state === 'complete' || state === 'error')
@@ -156,68 +212,88 @@ export class DataFlowGraph extends Container {
       case 'complete':
       case 'error': {
         if (this.hasAuth) {
-          // Layout:
+          // Layout with auth:
           //   AUTH
           //     |
-          //   REQUEST ──► RESPONSE
-          //                   |
-          //                 BODY
-          
+          //   REQUEST ──► [REDIRECTS...] ──► RESPONSE
+          //                                      |
+          //                                    BODY
+
           // Left column: AUTH above REQUEST
           // Right column: RESPONSE with BODY below
           const leftColumnHeight = nodeHeight * 2 + verticalSpacing
-          const rightColumnHeight = bodyVisible 
-            ? nodeHeight + bodySpacing + bodyCardHeight 
+          const rightColumnHeight = bodyVisible
+            ? nodeHeight + bodySpacing + bodyCardHeight
             : nodeHeight
-          
-          const totalWidth = nodeWidth * 2 + horizontalSpacing
+
+          const totalWidth = nodeWidth * 2 + horizontalSpacing + redirectTotalWidth
           const startX = (width - totalWidth) / 2
-          
+
           // Center the entire layout vertically based on max column height
           const totalHeight = Math.max(leftColumnHeight, rightColumnHeight)
           const startY = (height - totalHeight) / 2
-          
+
           // Left column positions (AUTH above REQUEST)
           const authY = startY
           const requestY = startY + nodeHeight + verticalSpacing
-          
-          // Right column: RESPONSE aligns horizontally with REQUEST
+
+          // Response position (after redirects)
+          const responseX = startX + nodeWidth + horizontalSpacing + redirectTotalWidth
           const responseY = requestY
-          
+
+          // Calculate redirect positions (centered vertically with request/response)
+          const redirectY = requestY + (nodeHeight - redirectSizing.height) / 2
+          const redirectPositions = this.getRedirectNodePositions(
+            startX + nodeWidth + horizontalSpacing,
+            redirectY
+          )
+
           return {
             auth: { x: startX, y: authY, visible: true },
             request: { x: startX, y: requestY, visible: true },
-            response: { x: startX + nodeWidth + horizontalSpacing, y: responseY, visible: true },
-            responseBody: { 
-              x: startX + nodeWidth + horizontalSpacing, 
-              y: responseY + nodeHeight + bodySpacing, 
+            response: { x: responseX, y: responseY, visible: true },
+            responseBody: {
+              x: responseX,
+              y: responseY + nodeHeight + bodySpacing,
               visible: bodyVisible
             },
+            redirects: redirectPositions,
           }
         } else {
           // Layout (no auth):
-          //   REQUEST ──► RESPONSE
-          //                   |
-          //                 BODY
-          
+          //   REQUEST ──► [REDIRECTS...] ──► RESPONSE
+          //                                      |
+          //                                    BODY
+
           // Total height includes body if visible
-          const totalHeight = bodyVisible 
-            ? nodeHeight + bodySpacing + bodyCardHeight 
+          const totalHeight = bodyVisible
+            ? nodeHeight + bodySpacing + bodyCardHeight
             : nodeHeight
-          
-          const totalWidth = nodeWidth * 2 + horizontalSpacing
+
+          const totalWidth = nodeWidth * 2 + horizontalSpacing + redirectTotalWidth
           const startX = (width - totalWidth) / 2
           const startY = (height - totalHeight) / 2
-          
+
+          // Response position (after redirects)
+          const responseX = startX + nodeWidth + horizontalSpacing + redirectTotalWidth
+
+          // Calculate redirect positions (centered vertically with request/response)
+          const redirectY = startY + (nodeHeight - redirectSizing.height) / 2
+          const redirectPositions = this.getRedirectNodePositions(
+            startX + nodeWidth + horizontalSpacing,
+            redirectY
+          )
+
           return {
             auth: { x: startX, y: startY - nodeHeight - verticalSpacing, visible: false },
             request: { x: startX, y: startY, visible: true },
-            response: { x: startX + nodeWidth + horizontalSpacing, y: startY, visible: true },
-            responseBody: { 
-              x: startX + nodeWidth + horizontalSpacing, 
-              y: startY + nodeHeight + bodySpacing, 
+            response: { x: responseX, y: startY, visible: true },
+            responseBody: {
+              x: responseX,
+              y: startY + nodeHeight + bodySpacing,
               visible: bodyVisible
             },
+            redirects: redirectPositions,
           }
         }
       }
@@ -394,6 +470,28 @@ export class DataFlowGraph extends Container {
       this.responseBodyCard?.hide(true)
     }
 
+    // Handle redirect nodes
+    const redirectPositions = (positions as { redirects?: Array<{ x: number; y: number }> }).redirects
+    if (redirectPositions && redirectPositions.length > 0) {
+      for (let i = 0; i < this.redirectNodes.length; i++) {
+        const node = this.redirectNodes[i]
+        const pos = redirectPositions[i]
+        if (node && pos) {
+          if (!node.isShown) {
+            // Slide in from left with staggered delay
+            node.slideIn('left', pos.x, pos.y, 50 + i * 30)
+          } else {
+            node.animateTo(pos.x, pos.y)
+          }
+        }
+      }
+    } else {
+      // Hide redirect nodes if no positions
+      for (const node of this.redirectNodes) {
+        node.hide(true)
+      }
+    }
+
     // Update connection line positions and visibility
     this.updateConnectionLines(positions)
   }
@@ -413,13 +511,28 @@ export class DataFlowGraph extends Container {
       }
     }
 
-    // Request to Response line - show if both are visible
+    // Request to Response/First Redirect line - show if both are visible
     if (positions.request.visible && positions.response.visible) {
       this.requestToResponseLine!.visible = true
     } else {
       if (this.requestToResponseLine) {
         this.requestToResponseLine.visible = false
         this.requestToResponseLine.setProgress(0)
+      }
+    }
+
+    // Redirect lines - show all when in complete/error state with redirects
+    const redirectPositions = (positions as { redirects?: Array<{ x: number; y: number }> }).redirects
+    const showRedirectLines = redirectPositions && redirectPositions.length > 0 && positions.response.visible
+
+    for (let i = 0; i < this.redirectLines.length; i++) {
+      const line = this.redirectLines[i]
+      if (showRedirectLines) {
+        line.visible = true
+        line.setProgress(1) // Full progress when visible
+      } else {
+        line.visible = false
+        line.setProgress(0)
       }
     }
 
@@ -443,7 +556,10 @@ export class DataFlowGraph extends Container {
     this.resolvedVariables = variables ?? {}
     // Use resolved auth config to determine if auth is needed
     this.hasAuth = authConfig != null && authConfig.type !== 'none'
-    
+
+    // Clear redirect nodes when request changes
+    this.clearRedirectNodes()
+
     if (!request) {
       this.transitionTo('idle')
       this.requestNode?.setContent('No request selected', false)
@@ -676,7 +792,10 @@ export class DataFlowGraph extends Container {
     this.responseToBodyLine?.setProgress(0)
     this.hasResponseBody = false
     this.responseBodyCard?.hide(true)
-    
+
+    // Clear redirect nodes
+    this.clearRedirectNodes()
+
     // Reset colors
     const { primaryColor } = this.options
     this.authNode?.setColor(primaryColor)
@@ -730,6 +849,176 @@ export class DataFlowGraph extends Container {
     this.authToRequestLine?.setColor(primaryColor)
     this.requestToResponseLine?.setColor(primaryColor)
     this.responseToBodyLine?.setColor(primaryColor)
+
+    // Update redirect node/line colors
+    for (const node of this.redirectNodes) {
+      node.setColor(0xf39c12) // Orange for redirects
+    }
+    for (const line of this.redirectLines) {
+      line.setColor(0xf39c12)
+    }
+  }
+
+  public setRedirectChain(redirectChain: RedirectHop[]) {
+    this.redirectChain = redirectChain
+    this.createRedirectNodes()
+
+    // Force layout update to include redirect nodes
+    if (this.timelineState === 'complete' || this.timelineState === 'error' || this.timelineState === 'fetching') {
+      this.transitionTo(this.timelineState, true)
+    }
+  }
+
+  private createRedirectNodes() {
+    // Clear existing redirect nodes and lines (but keep the chain)
+    this.clearRedirectNodes(false)
+
+    if (this.redirectChain.length === 0) return
+
+    const { bgColor, textColor } = this.options
+    const redirectColor = 0xf39c12 // Orange for redirects
+    const sizing = this.getRedirectSizing()
+
+    if (sizing.collapsed) {
+      // Create a single summary node for many redirects
+      const count = this.redirectChain.length
+      const firstHop = this.redirectChain[0]
+      const lastHop = this.redirectChain[count - 1]
+
+      const node = new TerminalNode({
+        x: 0,
+        y: 0,
+        width: sizing.width,
+        height: sizing.height,
+        title: `[ ${count}x ]`,
+        color: redirectColor,
+        bgColor,
+        textColor,
+      })
+
+      // Show first → last summary
+      const firstHost = this.extractHost(firstHop.url)
+      const lastHost = this.extractHost(lastHop.url)
+      node.setContent(`${firstHost}\n→ ${lastHost}`, false)
+      node.setStatus('success')
+      node.hide(false)
+
+      this.redirectNodes.push(node)
+      this.addChild(node)
+
+      // Single line to response
+      const line = new ConnectionLine({
+        fromX: 0,
+        fromY: 0,
+        toX: 0,
+        toY: 0,
+        color: redirectColor,
+        animated: true,
+        enableParticles: false,
+      })
+      line.setProgress(0)
+      line.visible = false
+
+      this.redirectLines.push(line)
+      this.addChild(line)
+    } else {
+      // Create individual nodes for each redirect hop
+      for (let i = 0; i < this.redirectChain.length; i++) {
+        const hop = this.redirectChain[i]
+
+        // Create redirect node with dynamic sizing
+        const node = new TerminalNode({
+          x: 0,
+          y: 0,
+          width: sizing.width,
+          height: sizing.height,
+          title: `[ ${hop.status} ]`,
+          color: redirectColor,
+          bgColor,
+          textColor,
+        })
+
+        // Show truncated redirect URL
+        const targetHost = this.extractHost(hop.url)
+        const displayHost = targetHost.length > 12 ? targetHost.slice(0, 10) + '..' : targetHost
+        node.setContent(`→ ${displayHost}`, false)
+        node.setStatus('success')
+        node.hide(false)
+
+        this.redirectNodes.push(node)
+        this.addChild(node)
+
+        // Create connection line to next node
+        const line = new ConnectionLine({
+          fromX: 0,
+          fromY: 0,
+          toX: 0,
+          toY: 0,
+          color: redirectColor,
+          animated: true,
+          enableParticles: false,
+        })
+        line.setProgress(0)
+        line.visible = false
+
+        this.redirectLines.push(line)
+        this.addChild(line)
+      }
+    }
+  }
+
+  private clearRedirectNodes(clearChain: boolean = true) {
+    for (const node of this.redirectNodes) {
+      this.removeChild(node)
+      node.destroy()
+    }
+    this.redirectNodes = []
+
+    for (const line of this.redirectLines) {
+      this.removeChild(line)
+      line.destroy()
+    }
+    this.redirectLines = []
+
+    if (clearChain) {
+      this.redirectChain = []
+    }
+  }
+
+  private extractHost(url: string): string {
+    try {
+      const parsed = new URL(url)
+      return parsed.hostname
+    } catch {
+      return url.slice(0, 20)
+    }
+  }
+
+  private getRedirectSizing(): { width: number; height: number; spacing: number; collapsed: boolean } {
+    const count = this.redirectChain.length
+    if (count === 0) {
+      return { ...this.REDIRECT_SIZES.normal, collapsed: false }
+    }
+    if (count > this.MAX_VISIBLE_REDIRECTS) {
+      return { ...this.REDIRECT_SIZES.summary, collapsed: true }
+    }
+    if (count <= 2) {
+      return { ...this.REDIRECT_SIZES.normal, collapsed: false }
+    }
+    return { ...this.REDIRECT_SIZES.compact, collapsed: false }
+  }
+
+  private getRedirectNodePositions(baseX: number, baseY: number): Array<{ x: number; y: number }> {
+    const positions: Array<{ x: number; y: number }> = []
+    const sizing = this.getRedirectSizing()
+    let currentX = baseX
+
+    for (let i = 0; i < this.redirectNodes.length; i++) {
+      positions.push({ x: currentX, y: baseY })
+      currentX += sizing.width + sizing.spacing
+    }
+
+    return positions
   }
 
   public destroy() {
@@ -744,6 +1033,15 @@ export class DataFlowGraph extends Container {
     this.authToRequestLine?.destroy()
     this.requestToResponseLine?.destroy()
     this.responseToBodyLine?.destroy()
+
+    // Clean up redirect nodes and lines
+    for (const node of this.redirectNodes) {
+      node.destroy()
+    }
+    for (const line of this.redirectLines) {
+      line.destroy()
+    }
+
     super.destroy()
   }
 }

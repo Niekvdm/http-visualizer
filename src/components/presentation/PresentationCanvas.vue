@@ -226,6 +226,9 @@ watch(() => requestStore.executionState, (state) => {
         sizeBreakdown: state.response.sizeBreakdown,
         tls: state.response.tls,
         redirectChain: state.response.redirectChain,
+        protocol: state.response.protocol,
+        serverIP: state.response.serverIP,
+        fromCache: state.response.fromCache,
       }
     )
   } else if (state.phase === 'error' && state.error && lastResponseStatus !== -1) {
