@@ -1,5 +1,5 @@
 import type { Container } from 'pixi.js'
-import type { ExecutionPhase, ParsedRequest } from '@/types'
+import type { ExecutionPhase, ParsedRequest, ResponseTiming, SizeBreakdown, TlsInfo, RedirectHop } from '@/types'
 
 /**
  * Common options for all presentation modes
@@ -29,6 +29,16 @@ export interface PresentationModeSettings {
 export type PresentationModeEvent = 'execute-request' | 'open-response'
 
 /**
+ * Extended response data with detailed timing, TLS info, etc.
+ */
+export interface ExtendedResponseData {
+  timing?: ResponseTiming
+  sizeBreakdown?: SizeBreakdown
+  tls?: TlsInfo
+  redirectChain?: RedirectHop[]
+}
+
+/**
  * Interface that all presentation modes must implement.
  * This standardizes the API for different visualization styles.
  */
@@ -53,8 +63,9 @@ export interface IPresentationMode extends Container {
    * @param statusText HTTP status text
    * @param size Response size in bytes
    * @param duration Request duration in milliseconds
+   * @param extendedData Optional extended response data (timing, TLS, etc.)
    */
-  setResponse(status: number, statusText: string, size: number, duration: number): void
+  setResponse(status: number, statusText: string, size: number, duration: number, extendedData?: ExtendedResponseData): void
 
   /**
    * Set error message after failed execution

@@ -220,7 +220,13 @@ watch(() => requestStore.executionState, (state) => {
       state.response.status,
       state.response.statusText,
       state.response.size,
-      state.response.timing.total
+      state.response.timing.total,
+      {
+        timing: state.response.timing,
+        sizeBreakdown: state.response.sizeBreakdown,
+        tls: state.response.tls,
+        redirectChain: state.response.redirectChain,
+      }
     )
   } else if (state.phase === 'error' && state.error && lastResponseStatus !== -1) {
     lastResponseStatus = -1 // Mark error as handled
