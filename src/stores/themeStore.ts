@@ -94,6 +94,96 @@ const themes: Theme[] = [
       glow: '#6688ff80',
     }
   },
+  {
+    id: 'paper',
+    name: 'Paper Light',
+    colors: {
+      bg: '#faf8f5',
+      bgSecondary: '#f0ede8',
+      bgTertiary: '#e6e2db',
+      primary: '#c25a3c',
+      primaryDim: '#a84830',
+      secondary: '#2d7d9a',
+      error: '#c9302c',
+      warning: '#d68910',
+      text: '#2c2825',
+      textDim: '#7a746c',
+      border: '#c25a3c25',
+      glow: '#c25a3c40',
+    }
+  },
+  {
+    id: 'solarized-light',
+    name: 'Solarized Light',
+    colors: {
+      bg: '#fdf6e3',
+      bgSecondary: '#eee8d5',
+      bgTertiary: '#e4ddc8',
+      primary: '#268bd2',
+      primaryDim: '#1a6091',
+      secondary: '#2aa198',
+      error: '#dc322f',
+      warning: '#b58900',
+      text: '#073642',
+      textDim: '#586e75',
+      border: '#268bd230',
+      glow: '#268bd250',
+    }
+  },
+  {
+    id: 'github-light',
+    name: 'GitHub Light',
+    colors: {
+      bg: '#ffffff',
+      bgSecondary: '#f6f8fa',
+      bgTertiary: '#eaeef2',
+      primary: '#0969da',
+      primaryDim: '#0550ae',
+      secondary: '#8250df',
+      error: '#cf222e',
+      warning: '#9a6700',
+      text: '#1f2328',
+      textDim: '#656d76',
+      border: '#0969da25',
+      glow: '#0969da40',
+    }
+  },
+  {
+    id: 'rose-pine-dawn',
+    name: 'Rosé Pine Dawn',
+    colors: {
+      bg: '#faf4ed',
+      bgSecondary: '#fffaf3',
+      bgTertiary: '#f2e9e1',
+      primary: '#b4637a',
+      primaryDim: '#9a4d63',
+      secondary: '#907aa9',
+      error: '#b4637a',
+      warning: '#ea9d34',
+      text: '#575279',
+      textDim: '#9893a5',
+      border: '#b4637a30',
+      glow: '#b4637a50',
+    }
+  },
+  {
+    id: 'blueprint',
+    name: 'Blueprint',
+    colors: {
+      bg: '#1a2744',
+      bgSecondary: '#1e2f52',
+      bgTertiary: '#243760',
+      primary: '#6cb4ee',
+      primaryDim: '#4a7ab8',
+      secondary: '#88ccff',
+      error: '#ff6b6b',
+      warning: '#ffd93d',
+      text: '#c5ddf5',
+      textDim: '#7a9bc5',
+      border: '#6cb4ee35',
+      glow: '#6cb4ee60',
+    }
+  },
 ]
 
 const STORAGE_KEY = 'http-visualizer-theme'

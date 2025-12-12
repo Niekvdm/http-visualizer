@@ -221,13 +221,16 @@ export const useEnvironmentStore = defineStore('environment', () => {
     activeEnvironmentId: string | null
     fileOverrides: Record<string, Record<string, string>>
   } {
+    // Deep copy fileOverrides to ensure all data is properly serialized
     const fileOverridesObj: Record<string, Record<string, string>> = {}
     fileOverrides.value.forEach((value, key) => {
-      fileOverridesObj[key] = value
+      fileOverridesObj[key] = { ...value }
     })
     
+    // Deep copy environments to ensure all data is properly serialized
+    // (Vue's reactive proxies can cause issues with direct references)
     return {
-      environments: environments.value,
+      environments: JSON.parse(JSON.stringify(environments.value)),
       activeEnvironmentId: activeEnvironmentId.value,
       fileOverrides: fileOverridesObj,
     }

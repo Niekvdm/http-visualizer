@@ -1,22 +1,24 @@
 import { Container, Graphics, Text, TextStyle, Ticker } from 'pixi.js'
-import type { ExecutionPhase, ParsedRequest } from '@/types'
-import type { 
-  IPresentationMode, 
-  PresentationModeOptions, 
+import type { ExecutionPhase, ParsedRequest, RedirectHop } from '@/types'
+import type {
+  IPresentationMode,
+  PresentationModeOptions,
   PresentationModeSettings,
-  PresentationModeEvent 
+  PresentationModeEvent,
+  ExtendedResponseData
 } from './IPresentationMode'
 import { resolveVariables } from '@/utils/variableResolver'
 
 /**
  * Blueprint Mode - Technical schematic/CAD drawing style
- * 
+ *
  * Shows:
  * - Grid background with dimension lines
  * - Request as "component" with ports
  * - Response as connected component
  * - Dashed lines for data flow
  * - Technical annotations with measurements
+ * - Redirect chain visualization
  */
 
 interface Component {
@@ -25,9 +27,11 @@ interface Component {
   width: number
   height: number
   label: string
-  type: 'client' | 'request' | 'server' | 'response' | 'auth'
+  type: 'client' | 'request' | 'server' | 'response' | 'auth' | 'redirect'
   ports: { x: number; y: number; side: 'left' | 'right' | 'top' | 'bottom' }[]
   data: string[]
+  isRedirect?: boolean
+  redirectIndex?: number
 }
 
 interface Connection {
@@ -36,6 +40,7 @@ interface Connection {
   progress: number
   label: string
   animated: boolean
+  isRedirect?: boolean
 }
 
 type BlueprintState = 'idle' | 'selected' | 'connecting' | 'complete' | 'error'
@@ -68,6 +73,9 @@ export class BlueprintMode extends Container implements IPresentationMode {
   private connections: Connection[] = []
   private animationProgress: number = 0
 
+  // Redirect chain support
+  private redirectChain: RedirectHop[] = []
+
   // Animation
   private ticker: Ticker
   private connectionSpeed: number = 0.015
@@ -79,8 +87,11 @@ export class BlueprintMode extends Container implements IPresentationMode {
   // Layout
   private readonly PADDING = 60
   private readonly GRID_SIZE = 20
-  private readonly COMPONENT_WIDTH = 180
-  private readonly COMPONENT_HEIGHT = 120
+  private readonly COMPONENT_WIDTH = 160
+  private readonly COMPONENT_HEIGHT = 100
+  private readonly REDIRECT_WIDTH = 100
+  private readonly REDIRECT_HEIGHT = 70
+  private readonly MAX_VISIBLE_REDIRECTS = 4
 
   // Blueprint colors
   private readonly BLUEPRINT_BG = 0x1a2744
@@ -267,66 +278,82 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
   private drawComponent(comp: Component) {
     const { errorColor } = this.options
+    const REDIRECT_COLOR = 0xf39c12 // Orange for redirects
 
     // Component box
     this.componentsGraphics.rect(comp.x, comp.y, comp.width, comp.height)
     this.componentsGraphics.fill({ color: this.BLUEPRINT_BG, alpha: 0.95 })
-    
+
     // Border color based on type
     let borderColor = this.BLUEPRINT_LINE
-    if (comp.type === 'response' && this.state === 'error') {
+    if (comp.type === 'redirect') {
+      borderColor = REDIRECT_COLOR
+    } else if (comp.type === 'response' && this.state === 'error') {
       borderColor = errorColor
     } else if (comp.type === 'response' && this.responseData) {
       borderColor = this.responseData.status >= 400 ? errorColor : 0x27ca40
     }
-    
+
     this.componentsGraphics.stroke({ color: borderColor, alpha: 0.8, width: 2 })
 
-    // Component header
-    this.componentsGraphics.rect(comp.x, comp.y, comp.width, 24)
+    // Component header - smaller for redirects
+    const headerHeight = comp.type === 'redirect' ? 18 : 24
+    this.componentsGraphics.rect(comp.x, comp.y, comp.width, headerHeight)
     this.componentsGraphics.fill({ color: borderColor, alpha: 0.2 })
 
-    // Header label
+    // Header label - use border color for redirects
+    const headerColor = comp.type === 'redirect' ? 0xf39c12 : this.BLUEPRINT_ACCENT
     const headerStyle = new TextStyle({
       fontFamily: 'Share Tech Mono, monospace',
-      fontSize: 10,
-      fill: this.BLUEPRINT_ACCENT,
+      fontSize: comp.type === 'redirect' ? 9 : 10,
+      fill: headerColor,
       fontWeight: 'bold',
     })
     const header = new Text({ text: comp.label, style: headerStyle })
-    header.x = comp.x + 8
-    header.y = comp.y + 6
+    header.x = comp.x + 6
+    header.y = comp.y + (comp.type === 'redirect' ? 3 : 5)
     this.labelsContainer.addChild(header)
 
-    // Component data
+    // Component data - smaller font and tighter spacing for redirects
+    const dataFontSize = comp.type === 'redirect' ? 8 : 9
+    const dataLineHeight = comp.type === 'redirect' ? 12 : 14
+    const dataStartY = comp.type === 'redirect' ? 22 : 32
+    const maxChars = comp.type === 'redirect' ? 14 : 25
+
     const dataStyle = new TextStyle({
       fontFamily: 'Fira Code, monospace',
-      fontSize: 9,
+      fontSize: dataFontSize,
       fill: this.BLUEPRINT_TEXT,
     })
 
     comp.data.forEach((line, i) => {
-      const truncated = line.length > 25 ? line.slice(0, 22) + '...' : line
+      const truncated = line.length > maxChars ? line.slice(0, maxChars - 2) + '..' : line
       const text = new Text({ text: truncated, style: dataStyle })
-      text.x = comp.x + 8
-      text.y = comp.y + 32 + i * 14
+      text.x = comp.x + 6
+      text.y = comp.y + dataStartY + i * dataLineHeight
       this.labelsContainer.addChild(text)
     })
 
-    // Draw ports
+    // Draw ports - smaller for redirects
+    const portRadius = comp.type === 'redirect' ? 3 : 4
+    const portOuterRadius = comp.type === 'redirect' ? 5 : 6
+    const portColor = comp.type === 'redirect' ? 0xf39c12 : this.BLUEPRINT_ACCENT
+
     for (const port of comp.ports) {
-      this.componentsGraphics.circle(comp.x + port.x, comp.y + port.y, 4)
-      this.componentsGraphics.fill({ color: this.BLUEPRINT_ACCENT, alpha: 1 })
-      this.componentsGraphics.circle(comp.x + port.x, comp.y + port.y, 6)
-      this.componentsGraphics.stroke({ color: this.BLUEPRINT_ACCENT, alpha: 0.5, width: 1 })
+      this.componentsGraphics.circle(comp.x + port.x, comp.y + port.y, portRadius)
+      this.componentsGraphics.fill({ color: portColor, alpha: 1 })
+      this.componentsGraphics.circle(comp.x + port.x, comp.y + port.y, portOuterRadius)
+      this.componentsGraphics.stroke({ color: portColor, alpha: 0.5, width: 1 })
     }
 
-    // Dimension lines
-    this.drawDimensionLine(
-      comp.x, comp.y + comp.height + 15,
-      comp.x + comp.width, comp.y + comp.height + 15,
-      `${comp.width}px`
-    )
+    // Dimension lines - skip for redirect components (too small)
+    if (comp.type !== 'redirect') {
+      this.drawDimensionLine(
+        comp.x, comp.y + comp.height + 15,
+        comp.x + comp.width, comp.y + comp.height + 15,
+        `${comp.width}px`
+      )
+    }
   }
 
   private drawDimensionLine(x1: number, y1: number, x2: number, y2: number, label: string) {
@@ -373,18 +400,19 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
   private drawConnections() {
     this.connectionsGraphics.clear()
+    const REDIRECT_COLOR = 0xf39c12 // Orange for redirects
 
     for (const conn of this.connections) {
       if (conn.progress <= 0) continue
 
       const fromComp = this.components[conn.from.component]
       const toComp = this.components[conn.to.component]
-      
+
       if (!fromComp || !toComp) continue
 
       const fromPort = fromComp.ports[conn.from.port]
       const toPort = toComp.ports[conn.to.port]
-      
+
       if (!fromPort || !toPort) continue
 
       const startX = fromComp.x + fromPort.x
@@ -396,14 +424,17 @@ export class BlueprintMode extends Container implements IPresentationMode {
       const currentX = startX + (endX - startX) * conn.progress
       const currentY = startY + (endY - startY) * conn.progress
 
+      // Use redirect color for redirect connections
+      const lineColor = conn.isRedirect ? REDIRECT_COLOR : this.BLUEPRINT_ACCENT
+
       // Draw dashed line
-      this.drawDashedLine(startX, startY, currentX, currentY, conn.animated)
+      this.drawDashedLine(startX, startY, currentX, currentY, conn.animated, lineColor)
 
       // Draw arrowhead if complete
       if (conn.progress >= 1) {
         const angle = Math.atan2(endY - startY, endX - startX)
         const arrowSize = 8
-        
+
         this.connectionsGraphics.moveTo(endX, endY)
         this.connectionsGraphics.lineTo(
           endX - arrowSize * Math.cos(angle - Math.PI / 6),
@@ -414,7 +445,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
           endY - arrowSize * Math.sin(angle + Math.PI / 6)
         )
         this.connectionsGraphics.closePath()
-        this.connectionsGraphics.fill({ color: this.BLUEPRINT_ACCENT, alpha: 0.9 })
+        this.connectionsGraphics.fill({ color: lineColor, alpha: 0.9 })
       }
 
       // Connection label
@@ -425,7 +456,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
         const style = new TextStyle({
           fontFamily: 'Fira Code, monospace',
           fontSize: 9,
-          fill: this.BLUEPRINT_ACCENT,
+          fill: lineColor,
         })
         const text = new Text({ text: conn.label, style })
         text.anchor.set(0.5)
@@ -438,17 +469,17 @@ export class BlueprintMode extends Container implements IPresentationMode {
       // Animated dot at connection head
       if (conn.animated && conn.progress < 1) {
         this.connectionsGraphics.circle(currentX, currentY, 4)
-        this.connectionsGraphics.fill({ color: this.BLUEPRINT_ACCENT, alpha: 1 })
+        this.connectionsGraphics.fill({ color: lineColor, alpha: 1 })
       }
     }
   }
 
-  private drawDashedLine(x1: number, y1: number, x2: number, y2: number, animated: boolean) {
+  private drawDashedLine(x1: number, y1: number, x2: number, y2: number, animated: boolean, color: number = this.BLUEPRINT_ACCENT) {
     const dashLength = 8
     const gapLength = 4
     const totalLength = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
     const angle = Math.atan2(y2 - y1, x2 - x1)
-    
+
     const offset = animated ? this.dashOffset : 0
     let currentLength = offset % (dashLength + gapLength)
 
@@ -464,7 +495,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
         this.connectionsGraphics.moveTo(sx, sy)
         this.connectionsGraphics.lineTo(ex, ey)
-        this.connectionsGraphics.stroke({ color: this.BLUEPRINT_ACCENT, alpha: 0.8, width: 2 })
+        this.connectionsGraphics.stroke({ color, alpha: 0.8, width: 2 })
       }
 
       currentLength += dashLength + gapLength
@@ -501,13 +532,30 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
     if (!this.currentRequest) return
 
-    const centerY = (height - 100) / 2
-    const hasAuth = this.currentRequest.auth?.type && this.currentRequest.auth.type !== 'none'
+    // Calculate layout based on redirect count
+    const redirectCount = this.redirectChain.length
+    const showCollapsedRedirects = redirectCount > this.MAX_VISIBLE_REDIRECTS
+    const visibleRedirectCount = showCollapsedRedirects ? 1 : redirectCount
 
-    // Client component
+    // Calculate total horizontal space needed
+    const mainComponentsWidth = this.COMPONENT_WIDTH * 2 // Client + Server
+    const redirectsWidth = visibleRedirectCount > 0
+      ? visibleRedirectCount * this.REDIRECT_WIDTH + visibleRedirectCount * 40
+      : 0
+    const requestWidth = this.COMPONENT_WIDTH
+    const totalWidth = mainComponentsWidth + redirectsWidth + requestWidth + 120 // gaps
+
+    // Starting X position to center the layout
+    const startX = Math.max(this.PADDING, (width - totalWidth) / 2)
+
+    // Use diagonal layout - Client top-left, Server bottom-right
+    const topY = this.PADDING + 40
+    const bottomY = height - this.PADDING - this.COMPONENT_HEIGHT - 80
+
+    // Client component (top-left)
     this.components.push({
-      x: this.PADDING + 20,
-      y: centerY - this.COMPONENT_HEIGHT / 2,
+      x: startX,
+      y: topY,
       width: this.COMPONENT_WIDTH,
       height: this.COMPONENT_HEIGHT,
       label: 'CLIENT',
@@ -522,11 +570,12 @@ export class BlueprintMode extends Container implements IPresentationMode {
       ],
     })
 
-    // Request component
-    const reqX = hasAuth ? width / 2 - this.COMPONENT_WIDTH / 2 : this.PADDING + this.COMPONENT_WIDTH + 100
+    // Request component (center-top, diagonal from client)
+    const requestX = startX + this.COMPONENT_WIDTH + 50
+    const requestY = topY + 30
     this.components.push({
-      x: reqX,
-      y: centerY - this.COMPONENT_HEIGHT / 2 - 30,
+      x: requestX,
+      y: requestY,
       width: this.COMPONENT_WIDTH,
       height: this.COMPONENT_HEIGHT,
       label: `REQUEST [${this.currentRequest.method}]`,
@@ -536,22 +585,84 @@ export class BlueprintMode extends Container implements IPresentationMode {
         { x: this.COMPONENT_WIDTH, y: this.COMPONENT_HEIGHT / 2, side: 'right' },
       ],
       data: [
-        this.truncateUrl(resolveVariables(this.currentRequest.url, this.resolvedVariables), 24),
+        this.truncateUrl(resolveVariables(this.currentRequest.url, this.resolvedVariables), 22),
         `Body: ${this.currentRequest.body ? 'Yes' : 'No'}`,
         `Content-Type: ${this.getContentType()}`,
       ],
     })
 
-    // Server component
+    // Add redirect components if any
+    let currentX = requestX + this.COMPONENT_WIDTH + 40
+    let currentY = requestY + 40
+
+    if (showCollapsedRedirects) {
+      // Single collapsed redirect node showing count
+      const firstHop = this.redirectChain[0]
+      const lastHop = this.redirectChain[redirectCount - 1]
+
+      this.components.push({
+        x: currentX,
+        y: currentY,
+        width: this.REDIRECT_WIDTH + 20,
+        height: this.REDIRECT_HEIGHT,
+        label: `${redirectCount}x REDIRECT`,
+        type: 'redirect',
+        ports: [
+          { x: 0, y: this.REDIRECT_HEIGHT / 2, side: 'left' },
+          { x: this.REDIRECT_WIDTH + 20, y: this.REDIRECT_HEIGHT / 2, side: 'right' },
+        ],
+        data: [
+          `${firstHop.status} → ${lastHop.status}`,
+          this.extractHost(lastHop.url),
+        ],
+        isRedirect: true,
+        redirectIndex: -1, // Collapsed
+      })
+
+      currentX += this.REDIRECT_WIDTH + 60
+      currentY += 30
+    } else if (redirectCount > 0) {
+      // Individual redirect nodes in diagonal pattern
+      for (let i = 0; i < redirectCount; i++) {
+        const hop = this.redirectChain[i]
+
+        this.components.push({
+          x: currentX,
+          y: currentY,
+          width: this.REDIRECT_WIDTH,
+          height: this.REDIRECT_HEIGHT,
+          label: `[${hop.status}]`,
+          type: 'redirect',
+          ports: [
+            { x: 0, y: this.REDIRECT_HEIGHT / 2, side: 'left' },
+            { x: this.REDIRECT_WIDTH, y: this.REDIRECT_HEIGHT / 2, side: 'right' },
+          ],
+          data: [
+            `→ ${this.extractHost(hop.url)}`,
+          ],
+          isRedirect: true,
+          redirectIndex: i,
+        })
+
+        currentX += this.REDIRECT_WIDTH + 30
+        currentY += 25 // Diagonal offset
+      }
+    }
+
+    // Server component (bottom-right area, continuing diagonal)
+    const serverX = Math.min(currentX + 20, width - this.PADDING - this.COMPONENT_WIDTH)
+    const serverY = Math.min(currentY + 20, bottomY)
+
     this.components.push({
-      x: width - this.PADDING - this.COMPONENT_WIDTH - 20,
-      y: centerY - this.COMPONENT_HEIGHT / 2,
+      x: serverX,
+      y: serverY,
       width: this.COMPONENT_WIDTH,
       height: this.COMPONENT_HEIGHT,
       label: 'SERVER',
       type: 'server',
       ports: [
         { x: 0, y: this.COMPONENT_HEIGHT / 2, side: 'left' },
+        { x: this.COMPONENT_WIDTH / 2, y: this.COMPONENT_HEIGHT, side: 'bottom' },
       ],
       data: [
         this.getHostname(),
@@ -560,7 +671,8 @@ export class BlueprintMode extends Container implements IPresentationMode {
       ],
     })
 
-    // Initial connection: Client -> Request
+    // Setup connections
+    // Client -> Request
     this.connections.push({
       from: { component: 0, port: 0 },
       to: { component: 1, port: 0 },
@@ -568,6 +680,63 @@ export class BlueprintMode extends Container implements IPresentationMode {
       label: 'INIT',
       animated: false,
     })
+
+    // Request -> (Redirects or Server)
+    const serverIndex = this.components.length - 1
+    const firstRedirectIndex = 2 // After client and request
+
+    if (visibleRedirectCount > 0) {
+      // Request -> First redirect
+      this.connections.push({
+        from: { component: 1, port: 1 },
+        to: { component: firstRedirectIndex, port: 0 },
+        progress: 1,
+        label: '',
+        animated: false,
+        isRedirect: true,
+      })
+
+      // Redirect chain connections
+      for (let i = 0; i < visibleRedirectCount - 1; i++) {
+        this.connections.push({
+          from: { component: firstRedirectIndex + i, port: 1 },
+          to: { component: firstRedirectIndex + i + 1, port: 0 },
+          progress: 1,
+          label: '',
+          animated: false,
+          isRedirect: true,
+        })
+      }
+
+      // Last redirect -> Server
+      this.connections.push({
+        from: { component: firstRedirectIndex + visibleRedirectCount - 1, port: 1 },
+        to: { component: serverIndex, port: 0 },
+        progress: 1,
+        label: '',
+        animated: false,
+        isRedirect: true,
+      })
+    } else {
+      // Direct: Request -> Server
+      this.connections.push({
+        from: { component: 1, port: 1 },
+        to: { component: serverIndex, port: 0 },
+        progress: 0,
+        label: 'HTTP',
+        animated: true,
+      })
+    }
+  }
+
+  private extractHost(url: string): string {
+    try {
+      const parsed = new URL(url)
+      const host = parsed.hostname
+      return host.length > 14 ? host.slice(0, 12) + '..' : host
+    } catch {
+      return url.slice(0, 12)
+    }
   }
 
   private setupResponseComponent() {
@@ -575,15 +744,23 @@ export class BlueprintMode extends Container implements IPresentationMode {
 
     if (!this.responseData && !this.errorMessage) return
 
-    const centerY = (height - 100) / 2
+    // Find the server component to position response below it
+    const serverComp = this.components.find(c => c.type === 'server')
+    if (!serverComp) return
 
-    // Response component
+    // Response component - positioned below server, slightly offset left for visual flow
     const status = this.responseData?.status || 0
     const statusText = this.responseData?.statusText || 'ERROR'
 
+    const responseX = serverComp.x - 30
+    const responseY = serverComp.y + this.COMPONENT_HEIGHT + 40
+
+    // Check if response would go off screen
+    const clampedY = Math.min(responseY, height - this.PADDING - this.COMPONENT_HEIGHT - 60)
+
     this.components.push({
-      x: width / 2 - this.COMPONENT_WIDTH / 2,
-      y: centerY - this.COMPONENT_HEIGHT / 2 + 80,
+      x: responseX,
+      y: clampedY,
       width: this.COMPONENT_WIDTH,
       height: this.COMPONENT_HEIGHT,
       label: `RESPONSE [${status}]`,
@@ -591,8 +768,8 @@ export class BlueprintMode extends Container implements IPresentationMode {
       ports: [
         { x: this.COMPONENT_WIDTH / 2, y: 0, side: 'top' },
       ],
-      data: this.errorMessage 
-        ? ['ERROR', this.errorMessage.slice(0, 24)]
+      data: this.errorMessage
+        ? ['ERROR', this.errorMessage.slice(0, 22)]
         : [
             `Status: ${status} ${statusText}`,
             `Size: ${this.formatBytes(this.responseData?.size || 0)}`,
@@ -600,9 +777,10 @@ export class BlueprintMode extends Container implements IPresentationMode {
           ],
     })
 
-    // Connection: Request -> Response
+    // Connection: Server -> Response (using server's bottom port)
+    const serverIndex = this.components.findIndex(c => c.type === 'server')
     this.connections.push({
-      from: { component: 1, port: 1 },
+      from: { component: serverIndex, port: 1 }, // Bottom port of server
       to: { component: this.components.length - 1, port: 0 },
       progress: 0,
       label: this.responseData ? `${this.responseData.duration.toFixed(0)}ms` : 'ERROR',
@@ -649,6 +827,7 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.resolvedVariables = variables
     this.responseData = null
     this.errorMessage = null
+    this.redirectChain = []
     this.components = []
     this.connections = []
 
@@ -693,8 +872,16 @@ export class BlueprintMode extends Container implements IPresentationMode {
     this.draw()
   }
 
-  public setResponse(status: number, statusText: string, size: number, duration: number) {
+  public setResponse(status: number, statusText: string, size: number, duration: number, extendedData?: ExtendedResponseData) {
     this.responseData = { status, statusText, size, duration }
+
+    // Handle redirect chain from extended data
+    if (extendedData?.redirectChain && extendedData.redirectChain.length > 0) {
+      this.redirectChain = extendedData.redirectChain
+      // Rebuild components to include redirects
+      this.setupComponents()
+    }
+
     this.setupResponseComponent()
     this.draw()
   }
@@ -702,6 +889,17 @@ export class BlueprintMode extends Container implements IPresentationMode {
   public setError(message: string) {
     this.errorMessage = message
     this.setupResponseComponent()
+    this.draw()
+  }
+
+  public setRedirectChain(redirectChain: RedirectHop[]) {
+    this.redirectChain = redirectChain
+
+    // Rebuild components to include redirects
+    this.setupComponents()
+    if (this.responseData || this.errorMessage) {
+      this.setupResponseComponent()
+    }
     this.draw()
   }
 

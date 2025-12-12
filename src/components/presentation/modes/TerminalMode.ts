@@ -79,6 +79,7 @@ export class TerminalMode extends Container {
   
   private readonly LINE_HEIGHT = 20
   private readonly PADDING = 20
+  private readonly BEZEL_WIDTH = 20
 
   private get maxLines(): number {
     const availableHeight = this.options.height - (this.PADDING * 2)
@@ -102,7 +103,7 @@ export class TerminalMode extends Container {
     this.addChild(this.scanlines)
 
     // Glow layer (blurred text for phosphor bloom effect)
-    this.glowFilter = new BlurFilter({ strength: 3, quality: 2 })
+    this.glowFilter = new BlurFilter({ strength: 2, quality: 5 })
     this.glowContainer = new Container()
     this.glowContainer.filters = [this.glowFilter]
     this.addChild(this.glowContainer)

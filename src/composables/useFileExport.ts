@@ -245,7 +245,12 @@ export function useFileExport() {
           for (const env of data.environments) {
             // Check if environment already exists
             const existing = envStore.environments.find(e => e.name === env.name)
-            if (!existing) {
+            if (existing) {
+              // Merge variables into existing environment (import values take precedence)
+              const mergedVariables = { ...existing.variables, ...env.variables }
+              envStore.updateEnvironment(existing.id, { variables: mergedVariables })
+              environmentsImported++
+            } else {
               envStore.createEnvironment(env.name, env.variables)
               environmentsImported++
             }
@@ -335,9 +340,14 @@ export function useFileExport() {
         let importedCount = 0
         for (const env of environments) {
           if (merge) {
-            // Merge mode: skip existing environments by name
+            // Merge mode: merge variables into existing environments
             const existing = envStore.environments.find(e => e.name === env.name)
-            if (!existing) {
+            if (existing) {
+              // Merge variables (import values take precedence)
+              const mergedVariables = { ...existing.variables, ...env.variables }
+              envStore.updateEnvironment(existing.id, { variables: mergedVariables })
+              importedCount++
+            } else {
               envStore.createEnvironment(env.name, env.variables)
               importedCount++
             }

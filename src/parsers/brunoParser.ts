@@ -277,10 +277,11 @@ function parseAuth(sections: Map<string, Record<string, string> | string>): Http
   // Check for OAuth2
   const oauth2Auth = sections.get('auth:oauth2')
   if (oauth2Auth && typeof oauth2Auth === 'object') {
+    const grantType = oauth2Auth.grant_type as 'client_credentials' | 'password' | 'authorization_code' | 'implicit' | undefined
     return {
       type: 'oauth2',
       oauth2: {
-        grantType: oauth2Auth.grant_type || 'client_credentials',
+        grantType: grantType || 'client_credentials',
         accessTokenUrl: oauth2Auth.access_token_url || '',
         clientId: oauth2Auth.client_id || '',
         clientSecret: oauth2Auth.client_secret || '',

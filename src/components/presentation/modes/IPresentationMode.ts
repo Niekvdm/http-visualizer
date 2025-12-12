@@ -127,6 +127,12 @@ export interface IPresentationMode extends Container {
   onJsonRevealClosed(): void
 
   /**
+   * Set redirect chain for visualization (optional)
+   * @param redirectChain Array of redirect hops
+   */
+  setRedirectChain?(redirectChain: RedirectHop[]): void
+
+  /**
    * Clean up resources
    */
   destroy(): void
