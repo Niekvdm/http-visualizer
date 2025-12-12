@@ -131,19 +131,19 @@ function isHeaderRevealed(key: string): boolean {
   <div class="flex flex-col" :class="isCollapsed ? '' : 'h-full'">
     <!-- Header -->
     <div 
-      class="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)]"
+      class="flex items-center justify-between px-4 py-2 border-b border-[var(--color-border)] bg-[var(--color-bg-tertiary)] hover:bg-[var(--color-bg)] cursor-pointer"
+	  @click="isCollapsed = !isCollapsed"
     >
       <div class="flex items-center gap-4">
         <!-- Collapse toggle -->
         <button 
           class="text-[var(--color-text-dim)] hover:text-[var(--color-text)] transition-transform duration-200"
           :class="{ '-rotate-90': isCollapsed }"
-          @click="isCollapsed = !isCollapsed"
         >
           <ChevronDown class="w-4 h-4" />
         </button>
         <!-- Tabs -->
-        <div class="flex gap-1">
+        <div class="flex gap-1" @click.stop>
           <!-- Request tab (always available when there's a sent request) -->
           <button 
             class="px-3 py-1 text-xs font-mono uppercase tracking-wider rounded transition-colors"
