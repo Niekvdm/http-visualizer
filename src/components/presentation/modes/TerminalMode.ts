@@ -1,4 +1,4 @@
-import { Container, Graphics, Text, TextStyle } from 'pixi.js'
+import { Container, Graphics, Text, TextStyle, BlurFilter } from 'pixi.js'
 import type { ExecutionPhase, ParsedRequest } from '@/types'
 import { resolveVariables } from '@/utils/variableResolver'
 
@@ -45,10 +45,17 @@ export class TerminalMode extends Container {
   private background: Graphics
   private crtOverlay: Graphics
   private scanlines: Graphics
+  private vignette: Graphics
+  private bezel: Graphics
+  private screenMask: Graphics
+  private glowContainer: Container
   private terminalContainer: Container
   private lines: TerminalLine[] = []
   private textObjects: Text[] = []
+  private glowObjects: Text[] = []
+  private glowFilter: BlurFilter
   private cursorBlink: Graphics
+  private cursorGlow: Graphics
   private currentRequest: ParsedRequest | null = null
   private resolvedVariables: Record<string, string> = {}
   private cursorInterval: ReturnType<typeof setInterval> | null = null
@@ -71,24 +78,55 @@ export class TerminalMode extends Container {
   
   private readonly LINE_HEIGHT = 20
   private readonly PADDING = 20
-  private readonly MAX_LINES = 22
+
+  private get maxLines(): number {
+    const availableHeight = this.options.height - (this.PADDING * 2)
+    return Math.max(1, Math.floor(availableHeight / this.LINE_HEIGHT) - 1)
+  }
 
   constructor(options: TerminalModeOptions) {
     super()
     this.options = options
 
+    // Background behind everything (dark frame area)
     this.background = new Graphics()
     this.addChild(this.background)
 
-    this.terminalContainer = new Container()
-    this.addChild(this.terminalContainer)
-
+    // CRT screen background and effects
     this.crtOverlay = new Graphics()
     this.addChild(this.crtOverlay)
 
+    // Scanlines (on screen)
     this.scanlines = new Graphics()
     this.addChild(this.scanlines)
 
+    // Glow layer (blurred text for phosphor bloom effect)
+    this.glowFilter = new BlurFilter({ strength: 3, quality: 2 })
+    this.glowContainer = new Container()
+    this.glowContainer.filters = [this.glowFilter]
+    this.addChild(this.glowContainer)
+
+    // Terminal content container (sharp text on top)
+    this.terminalContainer = new Container()
+    this.addChild(this.terminalContainer)
+
+    // Vignette effect (darker edges, on top of text)
+    this.vignette = new Graphics()
+    this.addChild(this.vignette)
+
+    // Screen mask (used for clipping, not visible)
+    this.screenMask = new Graphics()
+
+    // Bezel frame around the curved screen
+    this.bezel = new Graphics()
+    this.addChild(this.bezel)
+
+    // Cursor glow (blurred)
+    this.cursorGlow = new Graphics()
+    this.cursorGlow.filters = [new BlurFilter({ strength: 4, quality: 2 })]
+    this.addChild(this.cursorGlow)
+
+    // Cursor on top of everything (sharp)
     this.cursorBlink = new Graphics()
     this.addChild(this.cursorBlink)
 
@@ -100,44 +138,189 @@ export class TerminalMode extends Container {
   private draw() {
     const { width, height, bgColor, primaryColor } = this.options
 
+    // Background
     this.background.clear()
     this.background.rect(0, 0, width, height)
     this.background.fill({ color: bgColor })
 
+    // CRT overlay effects
+    this.crtOverlay.clear()
+
+    // Scanlines
     this.scanlines.clear()
     for (let y = 0; y < height; y += 3) {
       this.scanlines.moveTo(0, y)
       this.scanlines.lineTo(width, y)
-      this.scanlines.stroke({ color: 0x000000, alpha: 0.08, width: 1 })
+      this.scanlines.stroke({ color: 0x000000, alpha: 0.07, width: 1 })
     }
 
-    this.crtOverlay.clear()
-    this.crtOverlay.rect(0, 0, width, 50)
-    this.crtOverlay.fill({ color: primaryColor, alpha: 0.02 })
-    this.crtOverlay.rect(0, height - 50, width, 50)
-    this.crtOverlay.fill({ color: 0x000000, alpha: 0.08 })
+    // Vignette effect (edge shadows for CRT look)
+    this.drawVignette(0, 0, width, height)
+
+    // Clear unused graphics
+    this.bezel.clear()
 
     this.updateCursor()
   }
 
+  // Draw CRT phosphor backglow effect
+  private drawBackglow(width: number, height: number, glowColor: number) {
+    const centerX = width / 2
+    const centerY = height / 2
+    const maxRadius = Math.max(width, height) * 0.7
+
+    // Draw concentric ellipses from center outward with decreasing alpha
+    for (let r = maxRadius; r > 0; r -= 20) {
+      const alpha = 0.03 * (r / maxRadius)
+      const scaleX = width / height // Stretch horizontally to make ellipse
+
+      this.crtOverlay.ellipse(centerX, centerY, r * scaleX * 0.5, r * 0.5)
+      this.crtOverlay.fill({ color: glowColor, alpha })
+    }
+  }
+
+  // Draw a rectangle with curved/bulging edges (CRT screen shape)
+  private drawCurvedRect(graphics: Graphics, x: number, y: number, w: number, h: number, curve: number) {
+    const cx = curve * w // Horizontal curve offset
+    const cy = curve * h // Vertical curve offset
+
+    graphics.moveTo(x, y + cy)
+    // Top edge (curves inward slightly)
+    graphics.quadraticCurveTo(x + w / 2, y - cy * 0.5, x + w, y + cy)
+    // Right edge
+    graphics.quadraticCurveTo(x + w + cx * 0.5, y + h / 2, x + w, y + h - cy)
+    // Bottom edge
+    graphics.quadraticCurveTo(x + w / 2, y + h + cy * 0.5, x, y + h - cy)
+    // Left edge
+    graphics.quadraticCurveTo(x - cx * 0.5, y + h / 2, x, y + cy)
+  }
+
+  // Draw vignette effect
+  private drawVignette(x: number, y: number, w: number, h: number) {
+    this.vignette.clear()
+
+    const edgeWidth = Math.min(w, h) * 0.15
+
+    // Top edge shadow
+    for (let i = 0; i < edgeWidth; i++) {
+      const alpha = 0.15 * (1 - i / edgeWidth)
+      this.vignette.moveTo(x, y + i)
+      this.vignette.lineTo(x + w, y + i)
+      this.vignette.stroke({ color: 0x000000, alpha, width: 1 })
+    }
+
+    // Bottom edge shadow
+    for (let i = 0; i < edgeWidth; i++) {
+      const alpha = 0.15 * (1 - i / edgeWidth)
+      this.vignette.moveTo(x, y + h - i)
+      this.vignette.lineTo(x + w, y + h - i)
+      this.vignette.stroke({ color: 0x000000, alpha, width: 1 })
+    }
+
+    // Left edge shadow
+    for (let i = 0; i < edgeWidth; i++) {
+      const alpha = 0.1 * (1 - i / edgeWidth)
+      this.vignette.moveTo(x + i, y)
+      this.vignette.lineTo(x + i, y + h)
+      this.vignette.stroke({ color: 0x000000, alpha, width: 1 })
+    }
+
+    // Right edge shadow
+    for (let i = 0; i < edgeWidth; i++) {
+      const alpha = 0.1 * (1 - i / edgeWidth)
+      this.vignette.moveTo(x + w - i, y)
+      this.vignette.lineTo(x + w - i, y + h)
+      this.vignette.stroke({ color: 0x000000, alpha, width: 1 })
+    }
+
+    // Corner darkening
+    const cornerSize = edgeWidth * 1.5
+    this.drawCornerShadow(x, y, cornerSize, 0) // Top-left
+    this.drawCornerShadow(x + w, y, cornerSize, 1) // Top-right
+    this.drawCornerShadow(x + w, y + h, cornerSize, 2) // Bottom-right
+    this.drawCornerShadow(x, y + h, cornerSize, 3) // Bottom-left
+  }
+
+  // Draw corner shadow for vignette
+  private drawCornerShadow(cx: number, cy: number, size: number, corner: number) {
+    for (let r = size; r > 0; r -= 2) {
+      const alpha = 0.08 * (1 - r / size)
+      const startAngle = (corner * Math.PI) / 2
+      const endAngle = startAngle + Math.PI / 2
+
+      this.vignette.arc(cx, cy, r, startAngle, endAngle)
+      this.vignette.stroke({ color: 0x000000, alpha, width: 2 })
+    }
+  }
+
+  // Draw the monitor bezel
+  private drawBezel(width: number, height: number, curve: number, accentColor: number) {
+    this.bezel.clear()
+
+    const innerLeft = this.BEZEL_WIDTH
+    const innerTop = this.BEZEL_WIDTH
+    const innerWidth = width - this.BEZEL_WIDTH * 2
+    const innerHeight = height - this.BEZEL_WIDTH * 2
+
+    // Outer bezel (dark frame)
+    this.bezel.roundRect(0, 0, width, height, 8)
+    this.bezel.fill({ color: 0x1a1a1a })
+
+    // Inner bezel edge (slight bevel)
+    this.bezel.roundRect(4, 4, width - 8, height - 8, 6)
+    this.bezel.fill({ color: 0x252525 })
+
+    // Cut out the screen area
+    this.drawCurvedRect(this.bezel, innerLeft, innerTop, innerWidth, innerHeight, curve)
+    this.bezel.cut()
+
+    // Screen edge glow (subtle reflection on bezel edge)
+    this.bezel.moveTo(innerLeft, innerTop + innerHeight * 0.1)
+    this.bezel.quadraticCurveTo(innerLeft - 2, innerTop + innerHeight / 2, innerLeft, innerTop + innerHeight * 0.9)
+    this.bezel.stroke({ color: accentColor, alpha: 0.15, width: 1 })
+
+    this.bezel.moveTo(innerLeft + innerWidth, innerTop + innerHeight * 0.1)
+    this.bezel.quadraticCurveTo(innerLeft + innerWidth + 2, innerTop + innerHeight / 2, innerLeft + innerWidth, innerTop + innerHeight * 0.9)
+    this.bezel.stroke({ color: accentColor, alpha: 0.1, width: 1 })
+  }
+
   private updateCursor() {
     this.cursorBlink.clear()
-    
+    this.cursorGlow.clear()
+
     // Show cursor when typing or waiting for input
     if (this.cursorVisible) {
+      const lineY = this.PADDING + (this.lines.length * this.LINE_HEIGHT)
+      const curveOffset = this.getCurveOffset(lineY)
+
       if (this.state === 'typing' && this.typingText) {
         // Cursor at end of typing text
-        const lastLineY = this.PADDING + (this.lines.length * this.LINE_HEIGHT)
-        const cursorX = this.PADDING + (this.typingIndex * 9)
-        this.cursorBlink.rect(cursorX, lastLineY, 8, 16)
+        const cursorX = this.PADDING + curveOffset + (this.typingIndex * 9)
+        // Glow
+        this.cursorGlow.rect(cursorX - 2, lineY - 2, 12, 20)
+        this.cursorGlow.fill({ color: this.options.primaryColor })
+        // Sharp cursor
+        this.cursorBlink.rect(cursorX, lineY, 8, 16)
         this.cursorBlink.fill({ color: this.options.primaryColor })
       } else if (this.state === 'waiting-execute' || this.state === 'waiting-response') {
         // Cursor at start of new line
-        const lastLineY = this.PADDING + (this.lines.length * this.LINE_HEIGHT)
-        this.cursorBlink.rect(this.PADDING, lastLineY, 8, 16)
+        const cursorX = this.PADDING + curveOffset
+        // Glow
+        this.cursorGlow.rect(cursorX - 2, lineY - 2, 12, 20)
+        this.cursorGlow.fill({ color: this.options.primaryColor })
+        // Sharp cursor
+        this.cursorBlink.rect(cursorX, lineY, 8, 16)
         this.cursorBlink.fill({ color: this.options.primaryColor })
       }
     }
+  }
+
+  // Calculate horizontal offset for CRT barrel distortion effect
+  private getCurveOffset(y: number): number {
+    const centerY = this.options.height / 2
+    const normalizedY = (y - centerY) / centerY // -1 to 1
+    const curveStrength = 0 // Max pixels of curve at edges
+    return curveStrength * (normalizedY * normalizedY) // Parabolic curve
   }
 
   private startCursorBlink() {
@@ -192,8 +375,8 @@ export class TerminalMode extends Container {
     const line: TerminalLine = { text, type, color: style.fill as number }
     this.lines.push(line)
 
-    if (this.lines.length > this.MAX_LINES) {
-      this.lines = this.lines.slice(-this.MAX_LINES)
+    if (this.lines.length > this.maxLines) {
+      this.lines = this.lines.slice(-this.maxLines)
     }
 
     this.renderLines()
@@ -280,28 +463,53 @@ export class TerminalMode extends Container {
   }
 
   private renderLines() {
+    // Clear existing text
     this.textObjects.forEach(t => t.destroy())
     this.textObjects = []
+    this.glowObjects.forEach(t => t.destroy())
+    this.glowObjects = []
 
-    const startY = this.PADDING
-
-    // Render completed lines
+    // Render completed lines with CRT curve effect
     this.lines.forEach((line, index) => {
+      const y = this.PADDING + (index * this.LINE_HEIGHT)
+      const curveOffset = this.getCurveOffset(y)
       const style = this.getTextStyle(line.type)
+      const x = this.PADDING + curveOffset
+
+      // Glow text (blurred copy)
+      const glowText = new Text({ text: line.text, style })
+      glowText.x = x
+      glowText.y = y
+      this.glowContainer.addChild(glowText)
+      this.glowObjects.push(glowText)
+
+      // Sharp text on top
       const text = new Text({ text: line.text, style })
-      text.x = this.PADDING
-      text.y = startY + (index * this.LINE_HEIGHT)
+      text.x = x
+      text.y = y
       this.terminalContainer.addChild(text)
       this.textObjects.push(text)
     })
 
     // Render typing line
     if (this.state === 'typing' && this.typingText) {
+      const y = this.PADDING + (this.lines.length * this.LINE_HEIGHT)
+      const curveOffset = this.getCurveOffset(y)
       const style = this.getTextStyle(this.currentTypingType)
       const visibleText = this.typingText.substring(0, this.typingIndex)
+      const x = this.PADDING + curveOffset
+
+      // Glow text
+      const glowText = new Text({ text: visibleText, style })
+      glowText.x = x
+      glowText.y = y
+      this.glowContainer.addChild(glowText)
+      this.glowObjects.push(glowText)
+
+      // Sharp text
       const text = new Text({ text: visibleText, style })
-      text.x = this.PADDING
-      text.y = startY + (this.lines.length * this.LINE_HEIGHT)
+      text.x = x
+      text.y = y
       this.terminalContainer.addChild(text)
       this.textObjects.push(text)
     }
@@ -519,6 +727,7 @@ export class TerminalMode extends Container {
       clearInterval(this.cursorInterval)
     }
     this.textObjects.forEach(t => t.destroy())
+    this.glowObjects.forEach(t => t.destroy())
     super.destroy()
   }
 }

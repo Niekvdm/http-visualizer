@@ -74,13 +74,26 @@ function findFileIdForRequest(requestId: string): string | undefined {
   return undefined
 }
 
-// Handle run request event from sidebar (imported files)
+// Handle run request event from sidebar or presentation mode
 function handleRunRequest(event: CustomEvent) {
   const requestId = event.detail.requestId
+
+  // First check imported file requests
   const request = requestStore.allRequests.find(r => r.id === requestId)
   if (request) {
     const fileId = findFileIdForRequest(requestId)
     executeRequest(request, fileId)
+    return
+  }
+
+  // Then check collection requests
+  for (const collection of collectionStore.collections) {
+    const collectionRequest = collection.requests.find(r => r.id === requestId)
+    if (collectionRequest) {
+      const executableRequest = collectionStore.toExecutableRequest(collectionRequest, collection.id)
+      executeRequest(executableRequest, collection.id)
+      return
+    }
   }
 }
 

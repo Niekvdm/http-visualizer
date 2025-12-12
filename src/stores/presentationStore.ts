@@ -13,7 +13,7 @@ const SESSION_STORAGE_KEY = 'http-visualizer-presentation'
 
 // Default settings
 const defaultSettings: PresentationSettings = {
-  typingSpeed: 50,           // 50 chars/sec
+  typingSpeed: 120,           // 50 chars/sec
   autoAdvance: true,
   autoAdvanceDelay: 2000,    // 2 seconds between phases
   dramaticPauses: true,
