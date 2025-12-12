@@ -1,4 +1,4 @@
-import type { Container } from 'pixi.js'
+import type { Container, EventSystem } from 'pixi.js'
 import type { ExecutionPhase, ParsedRequest, ResponseTiming, SizeBreakdown, TlsInfo, RedirectHop } from '@/types'
 
 /**
@@ -12,6 +12,7 @@ export interface PresentationModeOptions {
   bgColor: number
   textColor: number
   errorColor: number
+  events?: EventSystem // For viewport interactions
 }
 
 /**

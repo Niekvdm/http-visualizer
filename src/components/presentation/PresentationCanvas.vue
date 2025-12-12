@@ -93,6 +93,7 @@ function createRenderer() {
     bgColor: hexToNumber(colors.value.bgSecondary),
     textColor: hexToNumber(colors.value.text),
     errorColor: hexToNumber(colors.value.error),
+    events: app.renderer.events, // For viewport pan/zoom
   }
 
   // Use the mode registry to create the appropriate renderer
