@@ -22,7 +22,7 @@ interface HexLine {
   offset: number
   hex: string[]
   ascii: string
-  type: 'header' | 'body' | 'separator'
+  type: 'header' | 'body' | 'separator' | 'error'
 }
 
 type PacketState = 'idle' | 'selected' | 'scanning' | 'complete' | 'error'
@@ -216,10 +216,8 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
         this.gridGraphics.fill({ color: primaryColor, alpha: 0.15 })
       }
 
-      // Only show lines up to scan position during scanning
-      if (this.state === 'scanning' && index > this.scanPosition) {
-        return
-      }
+      // Request lines are always visible (they were shown in 'selected' state)
+      // The scan effect is purely visual - beam moves across but doesn't hide content
 
       // Offset column
       const offsetStyle = new TextStyle({
@@ -238,6 +236,7 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
       // Hex bytes
       const hexColor = line.type === 'header' ? this.HEADER_COLOR 
         : line.type === 'separator' ? this.SEPARATOR_COLOR 
+        : line.type === 'error' ? errorColor
         : this.BODY_COLOR
 
       line.hex.forEach((byte, byteIndex) => {
@@ -259,10 +258,13 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
       })
 
       // ASCII representation
+      const asciiColor = line.type === 'header' ? this.HEADER_COLOR 
+        : line.type === 'error' ? errorColor 
+        : textColor
       const asciiStyle = new TextStyle({
         fontFamily: 'Fira Code, monospace',
         fontSize: 11,
-        fill: line.type === 'header' ? this.HEADER_COLOR : textColor,
+        fill: asciiColor,
       })
       const asciiText = new Text({ text: line.ascii, style: asciiStyle })
       asciiText.x = this.PADDING + this.OFFSET_WIDTH + this.HEX_WIDTH
@@ -357,7 +359,7 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
     }
   }
 
-  private generateHexLines(data: string, type: 'header' | 'body' | 'separator'): HexLine[] {
+  private generateHexLines(data: string, type: 'header' | 'body' | 'separator' | 'error'): HexLine[] {
     const lines: HexLine[] = []
     const bytes = new TextEncoder().encode(data)
     
@@ -463,6 +465,33 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
     this.responseLines.push(...statusLines)
   }
 
+  private buildErrorHex() {
+    if (!this.errorMessage) {
+      this.responseLines = []
+      return
+    }
+
+    // Separator between request and error
+    const sepOffset = this.requestLines.length > 0 
+      ? this.requestLines[this.requestLines.length - 1].offset + this.BYTES_PER_LINE
+      : 0
+
+    this.responseLines = [{
+      offset: sepOffset,
+      hex: Array(this.BYTES_PER_LINE).fill('XX'),
+      ascii: '=== ERROR ======'.padEnd(this.BYTES_PER_LINE, '='),
+      type: 'separator',
+    }]
+
+    // Error message as hex dump
+    const errorStr = `NETWORK ERROR\r\n${this.errorMessage}\r\n`
+    const errorLines = this.generateHexLines(errorStr, 'error')
+    errorLines.forEach((line, i) => {
+      line.offset = sepOffset + this.BYTES_PER_LINE + i * this.BYTES_PER_LINE
+    })
+    this.responseLines.push(...errorLines)
+  }
+
   // IPresentationMode implementation
 
   public setRequest(request: ParsedRequest | null, variables: Record<string, string> = {}) {
@@ -497,8 +526,12 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
 
       case 'authenticating':
       case 'fetching':
+        // Only reset scanPosition if we're not already scanning
+        // This prevents "jump back" when transitioning between authenticating → fetching
+        if (this.state !== 'scanning') {
+          this.scanPosition = 0
+        }
         this.state = 'scanning'
-        this.scanPosition = 0
         break
 
       case 'success':
@@ -523,6 +556,7 @@ export class PacketInspectorMode extends Container implements IPresentationMode 
 
   public setError(message: string) {
     this.errorMessage = message
+    this.buildErrorHex()
     this.draw()
   }
 

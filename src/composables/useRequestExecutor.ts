@@ -5,6 +5,7 @@ import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useAuthService } from '@/composables/useAuthService'
 import { useExtensionBridge, type ExtensionResponse } from '@/composables/useExtensionBridge'
 import { resolveVariables, mergeVariables } from '@/utils/variableResolver'
+import { requestLogger } from '@/utils/authLogger'
 import type { ParsedRequest, ExecutionResponse, ExecutionError, HttpAuth, HttpHeader, SentRequest } from '@/types'
 
 export function useRequestExecutor() {
@@ -20,6 +21,13 @@ export function useRequestExecutor() {
     if (isExecuting.value) return
 
     isExecuting.value = true
+    requestLogger.group('Execute Request')
+    requestLogger.info('Starting request execution', { 
+      requestId: request.id, 
+      method: request.method, 
+      url: request.url,
+      fileId 
+    })
     
     // Get resolved variables for this request
     // Priority: file overrides > active environment > file-level variables > request variables
@@ -29,6 +37,7 @@ export function useRequestExecutor() {
     const hasConfiguredAuth = authStore.hasAuthConfig(request.id, fileId)
     const hasFileAuth = request.auth?.type !== 'none' && request.auth?.type !== undefined
     const hasAuth = hasConfiguredAuth || hasFileAuth
+    requestLogger.debug('Auth check', { hasConfiguredAuth, hasFileAuth, hasAuth })
 
     try {
       // Start funny text rotation
@@ -36,30 +45,39 @@ export function useRequestExecutor() {
 
       // Phase 1: Authentication (if needed)
       if (hasAuth) {
+        requestLogger.info('Phase 1: Authentication')
         requestStore.setExecutionPhase('authenticating')
         
         // If using auth store config, try to get/refresh tokens
         if (hasConfiguredAuth) {
           const config = authStore.getAuthConfig(request.id, fileId)
+          requestLogger.debug('Auth config', { type: config?.type })
           if (config && ['oauth2-client-credentials', 'oauth2-password', 'oauth2-authorization-code'].includes(config.type)) {
             try {
               // Determine the token cache key based on where the config comes from
               const authSource = authStore.getAuthConfigSource(request.id, fileId)
               const tokenKey = authSource === 'file' && fileId ? `file:${fileId}` : request.id
+              requestLogger.debug('Token key', { authSource, tokenKey })
               
               await authService.getOrRefreshToken(tokenKey, config)
+              requestLogger.info('Token obtained/refreshed successfully')
             } catch (error) {
               // Token fetch failed, but we'll continue and let the request fail
-              console.error('Auth token fetch failed:', error)
+              requestLogger.error('Auth token fetch failed', error)
             }
           }
+        } else {
+          requestLogger.debug('Using file-baselegacy)')
         }
         
         // Small delay for visual effect
         await simulateDelay(500 + Math.random() * 300)
+      } else {
+        requestLogger.debug('No authentication required')
       }
 
       // Phase 2: Fetching
+      requestLogger.info('Phase 2: Fetching')
       requestStore.setExecutionPhase('fetching')
       
       const startTime = performance.now()
@@ -79,6 +97,7 @@ export function useRequestExecutor() {
             urlObj.searchParams.set(key, value)
           }
           url = urlObj.toString()
+          requestLogger.debug('Added API key query params')
         }
       }
 
@@ -86,6 +105,7 @@ export function useRequestExecutor() {
 
       // Convert headers to object for storage and extension
       const headersObj = headersToObject(fetchOptions.headers as Headers)
+      requestLogger.debug('Request headers', { headers: Object.keys(headersObj) })
       
       // Store the sent request details for visualization
       const sentRequest: SentRequest = {
@@ -99,6 +119,7 @@ export function useRequestExecutor() {
 
       // Try to use extension for CORS bypass, fall back to direct fetch
       if (isExtensionAvailable.value) {
+        requestLogger.info('Executing via extension (CORS bypass)')
         // Execute via extension (bypasses CORS)
         const extResponse = await executeViaExtension({
           method: request.method,
@@ -111,6 +132,7 @@ export function useRequestExecutor() {
         const duration = endTime - startTime
 
         if (!extResponse.success || !extResponse.data) {
+          requestLogger.error('Extension request failed', extResponse.error)
           throw new Error(extResponse.error?.message || 'Extension request failed')
         }
 
@@ -149,6 +171,7 @@ export function useRequestExecutor() {
         }
       } else {
         // Direct fetch (may hit CORS)
+        requestLogger.info('Executing via direct fetch')
         const response = await fetch(url, fetchOptions)
         
         const endTime = performance.now()
@@ -179,17 +202,30 @@ export function useRequestExecutor() {
 
       // Update store with response
       requestStore.executionState.response = executionResponse
+      requestLogger.info('Response received', { 
+        status: executionResponse.status, 
+        statusText: executionResponse.statusText,
+        size: executionResponse.size,
+        duration: executionResponse.timing?.total
+      })
 
       // Phase 3: Success or Error based on status
       if (executionResponse.status >= 200 && executionResponse.status < 300) {
+        requestLogger.info('Phase 3: Success')
         requestStore.setExecutionPhase('success')
+        requestLogger.groupEnd()
       } else {
+        requestLogger.warn('Phase 3: HTTP Error', { 
+          status: executionResponse.status, 
+          statusText: executionResponse.statusText 
+        })
         requestStore.executionState.error = {
           message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,
           code: String(executionResponse.status),
           phase: 'fetching',
         }
         requestStore.setExecutionPhase('error')
+        requestLogger.groupEnd()
       }
 
       // Add to history
@@ -208,6 +244,8 @@ export function useRequestExecutor() {
         }
       }
       
+      requestLogger.error('Request execution failed', { errorCode, errorMessage })
+      
       const executionError: ExecutionError = {
         message: errorMessage,
         code: errorCode,
@@ -217,6 +255,7 @@ export function useRequestExecutor() {
       requestStore.executionState.error = executionError
       requestStore.setExecutionPhase('error')
       requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+      requestLogger.groupEnd()
     } finally {
       stopFunnyTextRotation()
       isExecuting.value = false

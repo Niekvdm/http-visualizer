@@ -289,7 +289,7 @@ export class DataFlowGraph extends Container {
       color: primaryColor,
       bgColor,
       textColor,
-      maxLines: 8,
+      maxLines: 7,
     })
     this.responseBodyCard.hide(false) // Start hidden
     this.addChild(this.responseBodyCard)
@@ -338,15 +338,7 @@ export class DataFlowGraph extends Container {
     this.addChild(this.responseToBodyLine)
   }
 
-  private transitionTo(newState: TimelineState, forceUpdate: boolean = false) {
-    console.log('[DataFlowGraph] transitionTo:', { 
-      newState, 
-      forceUpdate, 
-      currentState: this.timelineState,
-      hasAuth: this.hasAuth,
-      hasResponseBody: this.hasResponseBody
-    })
-    
+  private transitionTo(newState: TimelineState, forceUpdate: boolean = false) {    
     if (this.timelineState === newState && !forceUpdate) return
     
     this.timelineState = newState
@@ -355,25 +347,16 @@ export class DataFlowGraph extends Container {
     // Animate nodes to new positions
     // If request has auth, never hide the auth node
     const shouldShowAuth = positions.auth.visible || this.hasAuth
-    console.log('[DataFlowGraph] auth decision:', { 
-      shouldShowAuth, 
-      positionsAuthVisible: positions.auth.visible,
-      hasAuth: this.hasAuth,
-      authNodeIsShown: this.authNode?.isShown 
-    })
     
     if (shouldShowAuth) {
       if (!this.authNode?.isShown) {
         // Slide in from top
-        console.log('[DataFlowGraph] slideIn auth')
         this.authNode?.slideIn('top', positions.auth.x, positions.auth.y, 100)
       } else {
-        console.log('[DataFlowGraph] animateTo auth')
         this.authNode?.animateTo(positions.auth.x, positions.auth.y)
       }
     } else {
       // Slide out to top
-      console.log('[DataFlowGraph] slideOut auth')
       this.authNode?.slideOut('top', 100)
     }
 
@@ -461,14 +444,6 @@ export class DataFlowGraph extends Container {
     // Use resolved auth config to determine if auth is needed
     this.hasAuth = authConfig != null && authConfig.type !== 'none'
     
-    console.log('[DataFlowGraph] setRequest:', { 
-      hasAuth: this.hasAuth, 
-      resolvedAuthType: authConfig?.type,
-      rawAuthType: request?.auth?.type,
-      currentState: this.timelineState,
-      authNodeIsShown: this.authNode?.isShown
-    })
-
     if (!request) {
       this.transitionTo('idle')
       this.requestNode?.setContent('No request selected', false)

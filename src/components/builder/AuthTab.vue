@@ -86,6 +86,9 @@ const showPassword = ref(false)
 const showToken = ref(false)
 const showSecret = ref(false)
 
+// Cache configs per type so switching tabs doesn't lose data
+const authConfigCache = ref<Partial<Record<HttpAuth['type'], HttpAuth>>>({})
+
 // OAuth2 authorization state
 const isAuthorizing = ref(false)
 const authError = ref<string | null>(null)
@@ -121,6 +124,14 @@ const tokenExpiry = computed(() => {
   return `${minutes}m ${seconds % 60}s`
 })
 
+// Clear cache when switching to a different request
+watch(
+  () => props.requestId,
+  () => {
+    authConfigCache.value = {}
+  }
+)
+
 // Initialize from props
 watch(
   () => props.auth,
@@ -128,6 +139,15 @@ watch(
     if (newAuth) {
       localAuth.value = JSON.parse(JSON.stringify(newAuth))
       useInherit.value = false
+      // Also add to cache so switching away and back preserves it
+      if (newAuth.type !== 'none') {
+        authConfigCache.value[newAuth.type] = JSON.parse(JSON.stringify(newAuth))
+      }
+      // Sync OAuth2 config to auth store on load so token fetch works
+      if (newAuth.type === 'oauth2' && newAuth.oauth2) {
+        // Use setTimeout to ensure requestId is available
+        setTimeout(() => syncOAuth2ConfigToAuthStore(), 0)
+      }
     } else {
       // No auth set - check if we should default to inherit
       if (hasFolderAuth.value) {
@@ -162,12 +182,27 @@ function emitUpdate() {
 
 // Change auth type
 function setAuthType(type: AuthType) {
+  // Save current config to cache before switching (if it has real data)
+  if (localAuth.value.type !== 'none') {
+    authConfigCache.value[localAuth.value.type] = JSON.parse(JSON.stringify(localAuth.value))
+  }
+  
   if (type === 'inherit') {
     useInherit.value = true
     localAuth.value = { type: 'none' }
   } else {
     useInherit.value = false
-    localAuth.value = createDefaultAuth(type as HttpAuth['type'])
+    // Restore from cache if available, otherwise create default
+    const cached = authConfigCache.value[type as HttpAuth['type']]
+    if (cached) {
+      localAuth.value = JSON.parse(JSON.stringify(cached))
+    } else {
+      localAuth.value = createDefaultAuth(type as HttpAuth['type'])
+    }
+    // Sync OAuth2 config to auth store so token fetch works when testing
+    if (type === 'oauth2') {
+      setTimeout(() => syncOAuth2ConfigToAuthStore(), 0)
+    }
   }
   emitUpdate()
 }
@@ -227,6 +262,8 @@ function updateOAuth2(field: keyof NonNullable<HttpAuth['oauth2']>, value: strin
   if (localAuth.value.oauth2) {
     (localAuth.value.oauth2 as Record<string, string | boolean>)[field] = value
     emitUpdate()
+    // Sync to auth store so token fetch works on request execution
+    syncOAuth2ConfigToAuthStore()
   }
 }
 
