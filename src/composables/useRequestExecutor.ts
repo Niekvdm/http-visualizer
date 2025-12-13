@@ -49,7 +49,7 @@ export function useRequestExecutor() {
       if (hasAuth) {
         requestLogger.info('Phase 1: Authentication')
         requestStore.setExecutionPhase('authenticating')
-        
+
         // If using auth store config, try to get/refresh tokens
         if (hasConfiguredAuth) {
           const config = authStore.getAuthConfig(request.id, fileId)
@@ -60,18 +60,48 @@ export function useRequestExecutor() {
               const authSource = authStore.getAuthConfigSource(request.id, fileId)
               const tokenKey = authSource === 'file' && fileId ? `file:${fileId}` : request.id
               requestLogger.debug('Token key', { authSource, tokenKey })
-              
-              await authService.getOrRefreshToken(tokenKey, config)
+
+              // For authorization code flow, check if we have a cached token first
+              // If not, proactively trigger auth sidebar instead of waiting for 401
+              if (config.type === 'oauth2-authorization-code' && config.oauth2AuthorizationCode) {
+                const cachedToken = authStore.cachedTokens.get(tokenKey)
+                const tokenValid = cachedToken && (!cachedToken.expiresAt || Date.now() < cachedToken.expiresAt)
+
+                if (!tokenValid) {
+                  requestLogger.info('No valid token for auth code flow - triggering auth sidebar proactively')
+
+                  // Clear any expired token
+                  if (cachedToken) {
+                    authStore.clearCachedToken(tokenKey)
+                  }
+
+                  // Prepare auth flow (generates URL, state, PKCE) without opening popup
+                  const { authUrl, state } = await authService.prepareAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
+
+                  // Set OAuth state in request store and switch to authorizing phase
+                  requestStore.setOAuthState(authUrl, state, tokenKey, false)
+                  requestStore.setExecutionPhase('authorizing')
+
+                  // Wait for callback (iframe or popup fallback handled by OAuthIframeView)
+                  await authService.waitForAuthCallback(tokenKey, state)
+
+                  requestLogger.info('Authentication successful, continuing with request')
+                }
+              } else {
+                // For other OAuth flows (client credentials, password), get token directly
+                await authService.getOrRefreshToken(tokenKey, config)
+              }
               requestLogger.info('Token obtained/refreshed successfully')
             } catch (error) {
-              // Token fetch failed, but we'll continue and let the request fail
+              // Token fetch failed or user cancelled auth
               requestLogger.error('Auth token fetch failed', error)
+              throw error // Rethrow to stop request execution
             }
           }
         } else {
-          requestLogger.debug('Using file-baselegacy)')
+          requestLogger.debug('Using file-based auth (legacy)')
         }
-        
+
         // Small delay for visual effect
         await simulateDelay(500 + Math.random() * 300)
       } else {
@@ -320,26 +350,32 @@ export function useRequestExecutor() {
       }
 
     } catch (error) {
-      // Handle network errors
+      // Handle errors
       let errorMessage = error instanceof Error ? error.message : 'Unknown error occurred'
       let errorCode = 'NETWORK_ERROR'
-      
+
+      // Detect auth cancellation
+      if (errorMessage.includes('cancelled') || errorMessage.includes('Authorization cancelled')) {
+        errorCode = 'AUTH_CANCELLED'
+        errorMessage = 'Authorization was cancelled'
+        requestLogger.warn('Request cancelled due to auth cancellation')
+      }
       // Detect CORS errors and provide helpful message
-      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+      else if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
         if (!isExtensionAvailable.value) {
           errorMessage = 'CORS error: Install the HTTP Visualizer extension to bypass CORS restrictions'
           errorCode = 'CORS_ERROR'
         }
       }
-      
+
       requestLogger.error('Request execution failed', { errorCode, errorMessage })
-      
+
       const executionError: ExecutionError = {
         message: errorMessage,
         code: errorCode,
         phase: requestStore.executionState.phase,
       }
-      
+
       requestStore.executionState.error = executionError
       requestStore.setExecutionPhase('error')
       requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
