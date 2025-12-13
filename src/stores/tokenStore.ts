@@ -3,15 +3,13 @@ import { ref } from 'vue'
 import type { CachedToken } from '@/types'
 import { createStorageService } from '@/composables/useStoragePersistence'
 
-const STORAGE_KEY = 'http-visualizer-tokens'
-
-const storage = createStorageService<Record<string, CachedToken>>(STORAGE_KEY, {
+const storage = createStorageService<Record<string, CachedToken>>('tokens', 'tokens', {
   storage: 'session',
 })
 
 /**
  * Token Store
- * 
+ *
  * Manages OAuth2 token caching and lifecycle separately from auth configuration.
  * This follows the Single Responsibility Principle by separating:
  * - Auth configuration (authStore) - what auth to use
@@ -20,27 +18,33 @@ const storage = createStorageService<Record<string, CachedToken>>(STORAGE_KEY, {
 export const useTokenStore = defineStore('tokens', () => {
   // State
   const cachedTokens = ref<Map<string, CachedToken>>(new Map())
+  const isInitialized = ref(false)
 
-  // Initialize from session storage
-  function initFromStorage() {
-    try {
-      const stored = storage.load()
-      if (stored) {
-        cachedTokens.value = new Map(Object.entries(stored))
-      }
-    } catch (error) {
-      console.error('Failed to load tokens from session storage:', error)
+  // Initialize from storage (sync for browser)
+  function initFromStorageSync() {
+    const stored = storage.loadSync()
+    if (stored) {
+      cachedTokens.value = new Map(Object.entries(stored))
     }
   }
 
-  // Save to session storage
-  function saveToStorage() {
-    try {
-      const tokensObj = Object.fromEntries(cachedTokens.value)
-      storage.save(tokensObj)
-    } catch (error) {
-      console.error('Failed to save tokens to session storage:', error)
+  // Async initialization for Tauri mode
+  async function initialize() {
+    if (isInitialized.value) return
+
+    const stored = await storage.load()
+    if (stored) {
+      cachedTokens.value = new Map(Object.entries(stored))
     }
+    isInitialized.value = true
+  }
+
+  // Save to storage (fire and forget)
+  function saveToStorage() {
+    const tokensObj = Object.fromEntries(cachedTokens.value)
+    storage.save(tokensObj).catch((err) => {
+      console.error('Failed to save tokens:', err)
+    })
   }
 
   /**
@@ -131,12 +135,13 @@ export const useTokenStore = defineStore('tokens', () => {
     return Math.round(remaining / 1000)
   }
 
-  // Initialize on store creation
-  initFromStorage()
+  // Initialize on store creation (sync for browser)
+  initFromStorageSync()
 
   return {
     // State
     cachedTokens,
+    isInitialized,
 
     // Getters
     getCachedToken,
@@ -146,6 +151,7 @@ export const useTokenStore = defineStore('tokens', () => {
     getTokenExpiresIn,
 
     // Actions
+    initialize,
     setCachedToken,
     clearCachedToken,
     clearAllTokens,

@@ -1,8 +1,16 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { AuthConfig, AuthState, CachedToken, AuthType } from '@/types'
+import { createStorageService } from '@/composables/useStoragePersistence'
 
-const SESSION_STORAGE_KEY = 'http-visualizer-auth'
+// Storage service for auth persistence
+// Uses session storage in browser, SQLite in Tauri (persisted across sessions in Tauri)
+const authStorage = createStorageService<{
+  authConfigs: Record<string, AuthConfig>
+  fileAuthConfigs: Record<string, AuthConfig>
+  globalAuthConfig: AuthConfig | null
+  cachedTokens: Record<string, CachedToken>
+}>('auth-state', 'auth', { storage: 'session' })
 
 export const useAuthStore = defineStore('auth', () => {
   // State
@@ -10,45 +18,60 @@ export const useAuthStore = defineStore('auth', () => {
   const fileAuthConfigs = ref<Map<string, AuthConfig>>(new Map()) // fileId -> config
   const globalAuthConfig = ref<AuthConfig | null>(null)
   const cachedTokens = ref<Map<string, CachedToken>>(new Map())
+  const isInitialized = ref(false)
 
-  // Initialize from session storage
-  function initFromStorage() {
-    try {
-      const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
-      if (stored) {
-        const data = JSON.parse(stored)
-        
-        if (data.authConfigs) {
-          authConfigs.value = new Map(Object.entries(data.authConfigs))
-        }
-        if (data.fileAuthConfigs) {
-          fileAuthConfigs.value = new Map(Object.entries(data.fileAuthConfigs))
-        }
-        if (data.globalAuthConfig) {
-          globalAuthConfig.value = data.globalAuthConfig
-        }
-        if (data.cachedTokens) {
-          cachedTokens.value = new Map(Object.entries(data.cachedTokens))
-        }
+  // Initialize from storage (sync for browser, async will override in Tauri)
+  function initFromStorageSync() {
+    const data = authStorage.loadSync()
+    if (data) {
+      if (data.authConfigs) {
+        authConfigs.value = new Map(Object.entries(data.authConfigs))
       }
-    } catch (error) {
-      console.error('Failed to load auth state from session storage:', error)
+      if (data.fileAuthConfigs) {
+        fileAuthConfigs.value = new Map(Object.entries(data.fileAuthConfigs))
+      }
+      if (data.globalAuthConfig) {
+        globalAuthConfig.value = data.globalAuthConfig
+      }
+      if (data.cachedTokens) {
+        cachedTokens.value = new Map(Object.entries(data.cachedTokens))
+      }
     }
   }
 
-  // Save to session storage
-  function saveToStorage() {
-    try {
-      const data = {
-        authConfigs: Object.fromEntries(authConfigs.value),
-        fileAuthConfigs: Object.fromEntries(fileAuthConfigs.value),
-        globalAuthConfig: globalAuthConfig.value,
-        cachedTokens: Object.fromEntries(cachedTokens.value),
+  // Async initialization for Tauri mode
+  async function initialize() {
+    if (isInitialized.value) return
+
+    const data = await authStorage.load()
+    if (data) {
+      if (data.authConfigs) {
+        authConfigs.value = new Map(Object.entries(data.authConfigs))
       }
-      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data))
-    } catch (error) {
-      console.error('Failed to save auth state to session storage:', error)
+      if (data.fileAuthConfigs) {
+        fileAuthConfigs.value = new Map(Object.entries(data.fileAuthConfigs))
+      }
+      if (data.globalAuthConfig) {
+        globalAuthConfig.value = data.globalAuthConfig
+      }
+      if (data.cachedTokens) {
+        cachedTokens.value = new Map(Object.entries(data.cachedTokens))
+      }
     }
+    isInitialized.value = true
+  }
+
+  // Save to storage (fire and forget)
+  function saveToStorage() {
+    const data = {
+      authConfigs: Object.fromEntries(authConfigs.value),
+      fileAuthConfigs: Object.fromEntries(fileAuthConfigs.value),
+      globalAuthConfig: globalAuthConfig.value,
+      cachedTokens: Object.fromEntries(cachedTokens.value),
+    }
+    authStorage.save(data).catch((err) => {
+      console.error('Failed to save auth state:', err)
+    })
   }
 
   // Get auth config for a request with inheritance:
@@ -305,8 +328,8 @@ export const useAuthStore = defineStore('auth', () => {
     saveToStorage()
   }
 
-  // Initialize on store creation
-  initFromStorage()
+  // Initialize on store creation (sync for browser, will be overridden by async in Tauri)
+  initFromStorageSync()
 
   return {
     // State
@@ -314,6 +337,7 @@ export const useAuthStore = defineStore('auth', () => {
     fileAuthConfigs,
     globalAuthConfig,
     cachedTokens,
+    isInitialized,
 
     // Getters
     getAuthConfig,
@@ -327,6 +351,7 @@ export const useAuthStore = defineStore('auth', () => {
     getAuthTypeLabel,
 
     // Actions
+    initialize,
     setAuthConfig,
     removeAuthConfig,
     setFileAuthConfig,

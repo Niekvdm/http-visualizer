@@ -2,8 +2,14 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Environment } from '@/types'
 import { generateId } from '@/utils/formatters'
+import { createStorageService } from '@/composables/useStoragePersistence'
 
-const SESSION_STORAGE_KEY = 'http-visualizer-env'
+// Storage service for environment persistence
+const envStorage = createStorageService<{
+  environments: Environment[]
+  activeEnvironmentId: string | null
+  fileOverrides: Record<string, Record<string, string>>
+}>('env-state', 'environment', { storage: 'session' })
 
 export const useEnvironmentStore = defineStore('environment', () => {
   // State
@@ -17,46 +23,58 @@ export const useEnvironmentStore = defineStore('environment', () => {
   ])
   const activeEnvironmentId = ref<string | null>('default')
   const fileOverrides = ref<Map<string, Record<string, string>>>(new Map())
+  const isInitialized = ref(false)
 
-  // Initialize from session storage
-  function initFromStorage() {
-    try {
-      const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
-      if (stored) {
-        const data = JSON.parse(stored)
-        
-        if (data.environments && Array.isArray(data.environments)) {
-          environments.value = data.environments
-        }
-        if (data.activeEnvironmentId !== undefined) {
-          activeEnvironmentId.value = data.activeEnvironmentId
-        }
-        if (data.fileOverrides) {
-          fileOverrides.value = new Map(Object.entries(data.fileOverrides))
-        }
+  // Initialize from storage (sync for browser)
+  function initFromStorageSync() {
+    const data = envStorage.loadSync()
+    if (data) {
+      if (data.environments && Array.isArray(data.environments)) {
+        environments.value = data.environments
       }
-    } catch (error) {
-      console.error('Failed to load environment state from session storage:', error)
+      if (data.activeEnvironmentId !== undefined) {
+        activeEnvironmentId.value = data.activeEnvironmentId
+      }
+      if (data.fileOverrides) {
+        fileOverrides.value = new Map(Object.entries(data.fileOverrides))
+      }
     }
   }
 
-  // Save to session storage
-  function saveToStorage() {
-    try {
-      const fileOverridesObj: Record<string, Record<string, string>> = {}
-      fileOverrides.value.forEach((value, key) => {
-        fileOverridesObj[key] = value
-      })
-      
-      const data = {
-        environments: environments.value,
-        activeEnvironmentId: activeEnvironmentId.value,
-        fileOverrides: fileOverridesObj,
+  // Async initialization for Tauri mode
+  async function initialize() {
+    if (isInitialized.value) return
+
+    const data = await envStorage.load()
+    if (data) {
+      if (data.environments && Array.isArray(data.environments)) {
+        environments.value = data.environments
       }
-      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(data))
-    } catch (error) {
-      console.error('Failed to save environment state to session storage:', error)
+      if (data.activeEnvironmentId !== undefined) {
+        activeEnvironmentId.value = data.activeEnvironmentId
+      }
+      if (data.fileOverrides) {
+        fileOverrides.value = new Map(Object.entries(data.fileOverrides))
+      }
     }
+    isInitialized.value = true
+  }
+
+  // Save to storage (fire and forget)
+  function saveToStorage() {
+    const fileOverridesObj: Record<string, Record<string, string>> = {}
+    fileOverrides.value.forEach((value, key) => {
+      fileOverridesObj[key] = value
+    })
+
+    const data = {
+      environments: environments.value,
+      activeEnvironmentId: activeEnvironmentId.value,
+      fileOverrides: fileOverridesObj,
+    }
+    envStorage.save(data).catch((err) => {
+      console.error('Failed to save environment state:', err)
+    })
   }
 
   // Watch for changes and auto-save
@@ -267,21 +285,23 @@ export const useEnvironmentStore = defineStore('environment', () => {
     fileOverrides.value = new Map()
   }
 
-  // Initialize on store creation
-  initFromStorage()
+  // Initialize on store creation (sync for browser)
+  initFromStorageSync()
 
   return {
     // State
     environments,
     activeEnvironmentId,
     fileOverrides,
-    
+    isInitialized,
+
     // Computed
     activeEnvironment,
     activeVariables,
     environmentNames,
-    
+
     // Actions
+    initialize,
     createEnvironment,
     updateEnvironment,
     deleteEnvironment,

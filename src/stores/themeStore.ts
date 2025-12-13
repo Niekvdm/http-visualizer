@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Theme, ThemeColors } from '@/types'
+import { createStorageService } from '@/composables/useStoragePersistence'
+
+// Storage service for theme persistence
+const themeStorage = createStorageService<string>('current-theme', 'theme')
 
 // Predefined themes
 const themes: Theme[] = [
@@ -186,31 +190,48 @@ const themes: Theme[] = [
   },
 ]
 
-const STORAGE_KEY = 'http-visualizer-theme'
+const DEFAULT_THEME = 'matrix'
 
-function loadFromStorage(): string {
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored && themes.some(t => t.id === stored)) {
-      return stored
-    }
-  } catch {
-    // localStorage not available
+// Synchronous load for initial render (browser only, falls back to default in Tauri)
+function loadFromStorageSync(): string {
+  const stored = themeStorage.loadSync()
+  if (stored && themes.some((t) => t.id === stored)) {
+    return stored
   }
-  return 'matrix'
+  return DEFAULT_THEME
 }
 
-function saveToStorage(themeId: string) {
-  try {
-    localStorage.setItem(STORAGE_KEY, themeId)
-  } catch {
-    // localStorage not available
+// Async load for full initialization
+async function loadFromStorageAsync(): Promise<string> {
+  const stored = await themeStorage.load()
+  if (stored && themes.some((t) => t.id === stored)) {
+    return stored
   }
+  return DEFAULT_THEME
+}
+
+// Save to storage (fire and forget)
+function saveToStorage(themeId: string) {
+  themeStorage.save(themeId).catch((err) => {
+    console.error('Failed to save theme:', err)
+  })
 }
 
 export const useThemeStore = defineStore('theme', () => {
-  const currentThemeId = ref(loadFromStorage())
+  // Use sync load for immediate render (browser only, default in Tauri)
+  const currentThemeId = ref(loadFromStorageSync())
   const customColors = ref<Partial<ThemeColors> | null>(null)
+  const isInitialized = ref(false)
+
+  // Async initialization for Tauri mode
+  async function initialize() {
+    if (isInitialized.value) return
+    const storedTheme = await loadFromStorageAsync()
+    if (storedTheme !== currentThemeId.value) {
+      currentThemeId.value = storedTheme
+    }
+    isInitialized.value = true
+  }
   
   const availableThemes = computed(() => themes)
   
@@ -273,6 +294,8 @@ export const useThemeStore = defineStore('theme', () => {
     availableThemes,
     colors,
     customColors,
+    isInitialized,
+    initialize,
     setTheme,
     setCustomColor,
     resetCustomColors,

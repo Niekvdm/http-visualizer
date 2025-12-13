@@ -2,15 +2,13 @@ import { ref, computed, watch } from 'vue'
 import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
 import { createStorageService } from '@/composables/useStoragePersistence'
 
-const STORAGE_KEY = 'http-visualizer-collections'
-
-// Storage service for persistence
+// Storage service for persistence (localStorage in browser, SQLite in Tauri)
 const storage = createStorageService<{
   collections: Collection[]
   selectedCollectionId: string | null
   selectedFolderId: string | null
   selectedRequestId: string | null
-}>(STORAGE_KEY)
+}>('collections', 'collections')
 
 // Core state
 export const collections = ref<Collection[]>([])
@@ -18,6 +16,7 @@ export const selectedCollectionId = ref<string | null>(null)
 export const selectedFolderId = ref<string | null>(null)
 export const selectedRequestId = ref<string | null>(null)
 export const isEditing = ref(false)
+export const isInitialized = ref(false)
 
 // Computed getters
 export const selectedCollection = computed(() => {
@@ -45,31 +44,49 @@ export const allRequests = computed(() => {
 })
 
 // Persistence functions
-export function loadFromStorage() {
-  try {
-    const stored = storage.load()
-    if (stored) {
-      collections.value = stored.collections || []
-      selectedCollectionId.value = stored.selectedCollectionId || null
-      selectedFolderId.value = stored.selectedFolderId || null
-      selectedRequestId.value = stored.selectedRequestId || null
-    }
-  } catch (e) {
-    console.error('Failed to load collections from localStorage:', e)
+
+// Sync load for browser (immediate)
+export function loadFromStorageSync() {
+  const stored = storage.loadSync()
+  if (stored) {
+    collections.value = stored.collections || []
+    selectedCollectionId.value = stored.selectedCollectionId || null
+    selectedFolderId.value = stored.selectedFolderId || null
+    selectedRequestId.value = stored.selectedRequestId || null
   }
 }
 
+// Async initialization for Tauri mode
+export async function initialize() {
+  if (isInitialized.value) return
+
+  const stored = await storage.load()
+  if (stored) {
+    collections.value = stored.collections || []
+    selectedCollectionId.value = stored.selectedCollectionId || null
+    selectedFolderId.value = stored.selectedFolderId || null
+    selectedRequestId.value = stored.selectedRequestId || null
+  }
+  isInitialized.value = true
+}
+
+// Save to storage (fire and forget)
 export function saveToStorage() {
-  try {
-    storage.save({
+  storage
+    .save({
       collections: collections.value,
       selectedCollectionId: selectedCollectionId.value,
       selectedFolderId: selectedFolderId.value,
       selectedRequestId: selectedRequestId.value,
     })
-  } catch (e) {
-    console.error('Failed to save collections to localStorage:', e)
-  }
+    .catch((e) => {
+      console.error('Failed to save collections:', e)
+    })
+}
+
+// Legacy function for backwards compatibility
+export function loadFromStorage() {
+  loadFromStorageSync()
 }
 
 // Auto-save on changes

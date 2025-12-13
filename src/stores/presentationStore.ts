@@ -1,15 +1,19 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import type { 
-  PresentationMode, 
-  PresentationPhase, 
+import type {
+  PresentationMode,
+  PresentationPhase,
   PresentationSettings,
   TerminalLine,
   ParsedRequest,
-  ExecutionState
+  ExecutionState,
 } from '@/types'
+import { createStorageService } from '@/composables/useStoragePersistence'
 
-const SESSION_STORAGE_KEY = 'http-visualizer-presentation'
+const presentationStorage = createStorageService<{
+  mode: PresentationMode
+  settings: PresentationSettings
+}>('presentation', 'presentation', { storage: 'session' })
 
 // Default settings
 const defaultSettings: PresentationSettings = {
@@ -107,30 +111,39 @@ export const usePresentationStore = defineStore('presentation', () => {
     return labels[mode.value] || mode.value
   })
 
-  // Initialize from storage
-  function initFromStorage() {
-    try {
-      const stored = sessionStorage.getItem(SESSION_STORAGE_KEY)
-      if (stored) {
-        const data = JSON.parse(stored)
-        if (data.mode) mode.value = data.mode
-        if (data.settings) settings.value = { ...defaultSettings, ...data.settings }
-      }
-    } catch (error) {
-      console.error('Failed to load presentation state:', error)
+  const isInitialized = ref(false)
+
+  // Initialize from storage (sync for browser)
+  function initFromStorageSync() {
+    const data = presentationStorage.loadSync()
+    if (data) {
+      if (data.mode) mode.value = data.mode
+      if (data.settings) settings.value = { ...defaultSettings, ...data.settings }
     }
   }
 
-  // Save to storage
+  // Async initialization for Tauri mode
+  async function initialize() {
+    if (isInitialized.value) return
+
+    const data = await presentationStorage.load()
+    if (data) {
+      if (data.mode) mode.value = data.mode
+      if (data.settings) settings.value = { ...defaultSettings, ...data.settings }
+    }
+    isInitialized.value = true
+  }
+
+  // Save to storage (fire and forget)
   function saveToStorage() {
-    try {
-      sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify({
+    presentationStorage
+      .save({
         mode: mode.value,
         settings: settings.value,
-      }))
-    } catch (error) {
-      console.error('Failed to save presentation state:', error)
-    }
+      })
+      .catch((err) => {
+        console.error('Failed to save presentation state:', err)
+      })
   }
 
   // Actions
@@ -365,8 +378,8 @@ export const usePresentationStore = defineStore('presentation', () => {
     })
   }
 
-  // Initialize
-  initFromStorage()
+  // Initialize (sync for browser)
+  initFromStorageSync()
 
   return {
     // State
@@ -386,13 +399,15 @@ export const usePresentationStore = defineStore('presentation', () => {
     countdown,
     phaseProgress,
     jsonRevealProgress,
-    
+    isInitialized,
+
     // Computed
     isPresentationMode,
     currentNarrative,
     modeLabel,
-    
+
     // Actions
+    initialize,
     setMode,
     setPhase,
     addTerminalLine,

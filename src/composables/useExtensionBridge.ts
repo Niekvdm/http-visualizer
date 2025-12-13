@@ -4,9 +4,13 @@
  * Handles communication with the HTTP Visualizer browser extension
  * for bypassing CORS restrictions. Also supports a Rust proxy backend
  * as an alternative when the extension is not available.
+ *
+ * In Tauri desktop mode, uses IPC commands directly instead of fetch.
  */
 
 import { ref, readonly, onMounted, onUnmounted } from 'vue'
+import { isTauri } from '@/services/storage/platform'
+import * as ApiClient from '@/services/api'
 
 // Extension identifier (must match content.js)
 const EXTENSION_ID = 'http-visualizer-extension'
@@ -224,18 +228,24 @@ async function checkExtensionAvailability(): Promise<boolean> {
 
 /**
  * Check if the Rust proxy backend is available
+ * In Tauri mode, this is always true (IPC is always available)
  */
 async function checkProxyBackendAvailability(): Promise<boolean> {
+  // In Tauri mode, IPC is always available
+  if (isTauri()) {
+    isProxyBackendAvailable.value = true
+    proxyBackendVersion.value = 'tauri-ipc'
+    console.log('[HTTP Visualizer] Tauri IPC backend available')
+    return true
+  }
+
+  // Browser mode: check HTTP backend
   try {
-    const response = await fetch('/api/health', {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    })
-    if (response.ok) {
-      const data = await response.json()
+    const isHealthy = await ApiClient.checkHealth()
+    if (isHealthy) {
       isProxyBackendAvailable.value = true
-      proxyBackendVersion.value = data.version || '1.0.0'
-      console.log('[HTTP Visualizer] Proxy backend detected, version:', proxyBackendVersion.value)
+      proxyBackendVersion.value = '1.0.0'
+      console.log('[HTTP Visualizer] Proxy backend detected')
       return true
     }
   } catch {
@@ -247,6 +257,7 @@ async function checkProxyBackendAvailability(): Promise<boolean> {
 
 /**
  * Execute an HTTP request through the proxy backend
+ * Uses Tauri IPC in desktop mode, fetch in browser mode
  */
 async function executeViaProxy(options: {
   method: string
@@ -255,21 +266,15 @@ async function executeViaProxy(options: {
   body?: string
   timeout?: number
 }): Promise<ExtensionResponse> {
-  const response = await fetch('/api/proxy', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      method: options.method,
-      url: options.url,
-      headers: options.headers || {},
-      body: options.body,
-      timeout: options.timeout || 30000,
-    }),
+  const result = await ApiClient.proxyRequest({
+    method: options.method,
+    url: options.url,
+    headers: options.headers,
+    body: options.body,
+    timeout: options.timeout || 30000,
   })
 
-  const result = await response.json()
+  // Convert API response to ExtensionResponse format
   return result as ExtensionResponse
 }
 
