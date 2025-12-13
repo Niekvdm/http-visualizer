@@ -228,10 +228,11 @@ async function checkExtensionAvailability(): Promise<boolean> {
 
 /**
  * Check if the Rust proxy backend is available
- * In Tauri mode, this is always true (IPC is always available)
+ * Only available in Tauri mode (IPC). Browser mode relies on extension only
+ * because server-side proxy cannot access user's localhost.
  */
 async function checkProxyBackendAvailability(): Promise<boolean> {
-  // In Tauri mode, IPC is always available
+  // In Tauri mode, IPC is always available (runs locally, can access localhost)
   if (isTauri()) {
     isProxyBackendAvailable.value = true
     proxyBackendVersion.value = 'tauri-ipc'
@@ -239,18 +240,8 @@ async function checkProxyBackendAvailability(): Promise<boolean> {
     return true
   }
 
-  // Browser mode: check HTTP backend
-  try {
-    const isHealthy = await ApiClient.checkHealth()
-    if (isHealthy) {
-      isProxyBackendAvailable.value = true
-      proxyBackendVersion.value = '1.0.0'
-      console.log('[HTTP Visualizer] Proxy backend detected')
-      return true
-    }
-  } catch {
-    // Backend not available
-  }
+  // Browser mode: proxy backend disabled
+  // Server-side proxy cannot access user's localhost, so we only support extension
   isProxyBackendAvailable.value = false
   return false
 }
