@@ -1,16 +1,13 @@
 <script setup lang="ts">
 import { ref, watch, nextTick } from 'vue'
-import RequestSidebar from '@/components/sidebar/RequestSidebar.vue'
 import CollectionSidebar from '@/components/builder/CollectionSidebar.vue'
 import ResponseViewer from '@/components/viewer/ResponseViewer.vue'
-import { Archive, FileText } from 'lucide-vue-next'
 
 const sidebarWidth = ref(320)
 const viewerHeight = ref(300)
 const isDraggingSidebar = ref(false)
 const isDraggingViewer = ref(false)
 const isViewerCollapsed = ref(true)
-const activeTab = ref<'collections' | 'imported'>('collections')
 
 const emit = defineEmits<{
   'run-collection-request': [requestId: string, collectionId: string]
@@ -74,10 +71,7 @@ function stopViewerDrag() {
       <div class="flex items-center gap-3">
         <slot name="header-left" />
         <div class="text-[var(--color-primary)] font-bold text-lg tracking-wider glow-text">
-          HTTP_VISUALIZER
-        </div>
-        <div class="text-[var(--color-text-dim)] text-xs">
-          v1.0.0
+          Tommie
         </div>
       </div>
       <div class="flex items-center gap-2">
@@ -88,47 +82,15 @@ function stopViewerDrag() {
     <!-- Main content -->
     <div class="flex-1 flex overflow-hidden">
       <!-- Sidebar -->
-      <aside 
+      <aside
         class="shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden flex flex-col"
         :style="{ width: `${sidebarWidth}px` }"
       >
-        <!-- Tab switcher -->
-        <div class="flex border-b border-[var(--color-border)] shrink-0">
-          <button
-            class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-mono uppercase tracking-wider transition-colors"
-            :class="[
-              activeTab === 'collections'
-                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]'
-            ]"
-            @click="activeTab = 'collections'"
-          >
-            <Archive class="w-3.5 h-3.5" />
-            Collections
-          </button>
-          <button
-            class="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-mono uppercase tracking-wider transition-colors"
-            :class="[
-              activeTab === 'imported'
-                ? 'text-[var(--color-primary)] border-b-2 border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                : 'text-[var(--color-text-dim)] hover:text-[var(--color-text)] hover:bg-[var(--color-bg-tertiary)]'
-            ]"
-            @click="activeTab = 'imported'"
-          >
-            <FileText class="w-3.5 h-3.5" />
-            Imported
-          </button>
-        </div>
-
-        <!-- Tab content -->
-        <div class="flex-1 overflow-hidden">
-          <CollectionSidebar 
-            v-if="activeTab === 'collections'"
-            @run-request="(reqId, colId) => emit('run-collection-request', reqId, colId)"
-            @edit-request="(reqId, colId) => emit('edit-collection-request', reqId, colId)"
-          />
-          <RequestSidebar v-else />
-        </div>
+        <!-- Collection sidebar only (unified system) -->
+        <CollectionSidebar
+          @run-request="(reqId, colId) => emit('run-collection-request', reqId, colId)"
+          @edit-request="(reqId, colId) => emit('edit-collection-request', reqId, colId)"
+        />
       </aside>
 
       <!-- Sidebar resize handle -->

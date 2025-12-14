@@ -30,8 +30,8 @@ export function createCollection(name: string, description?: string): Collection
 }
 
 export function updateCollection(
-  id: string, 
-  updates: Partial<Pick<Collection, 'name' | 'description' | 'variables' | 'collapsed'>>
+  id: string,
+  updates: Partial<Omit<Collection, 'id' | 'createdAt'>>
 ) {
   const collection = collections.value.find(c => c.id === id)
   if (collection) {
@@ -73,5 +73,14 @@ export function importCollections(imported: Collection[], merge = false) {
   } else {
     collections.value = imported
   }
+}
+
+/**
+ * Import a single collection directly (from Import Wizard)
+ * Unlike importCollections, this always adds to existing collections
+ */
+export function importCollection(collection: Collection): void {
+  collections.value.push(collection)
+  selectedCollectionId.value = collection.id
 }
 

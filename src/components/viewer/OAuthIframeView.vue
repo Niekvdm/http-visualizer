@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useAuthService } from '@/composables/useAuthService'
 import { ExternalLink, AlertTriangle, RefreshCw, Lock, ShieldCheck, X } from 'lucide-vue-next'
 
@@ -15,7 +15,7 @@ const emit = defineEmits<{
   'fallback-to-popup': []
 }>()
 
-const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 const authService = useAuthService()
 
 const iframeRef = ref<HTMLIFrameElement | null>(null)
@@ -74,7 +74,7 @@ function handleLoadTimeout() {
 }
 
 function openInPopup() {
-  requestStore.setOAuthUsePopup(true)
+  executionStore.setOAuthUsePopup(true)
   emit('fallback-to-popup')
 
   const popup = authService.openAuthPopupFallback(props.authUrl)
@@ -160,7 +160,7 @@ watch(() => props.authUrl, () => {
           <RefreshCw class="spinner" />
           <div class="spinner-ring" />
         </div>
-        <div class="loading-text">{{ requestStore.executionState.funnyText }}</div>
+        <div class="loading-text">{{ executionStore.executionState.funnyText }}</div>
         <div class="loading-subtext">Loading authorization page...</div>
       </div>
     </div>

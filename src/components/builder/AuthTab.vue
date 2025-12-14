@@ -5,7 +5,7 @@ import { useCollectionStore } from '@/stores/collectionStore'
 import { useAuthService } from '@/composables/useAuthService'
 import { useAuthStore } from '@/stores/authStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
-import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { resolveVariables } from '@/utils/variableResolver'
 import { Lock, Eye, EyeOff, FolderOpen, AlertTriangle, Check } from 'lucide-vue-next'
 import VariableInput from './VariableInput.vue'
@@ -25,7 +25,7 @@ const collectionStore = useCollectionStore()
 const authService = useAuthService()
 const authStore = useAuthStore()
 const environmentStore = useEnvironmentStore()
-const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 
 type AuthType = HttpAuth['type'] | 'inherit'
 
@@ -363,12 +363,12 @@ async function initiateAuth() {
 
       // Prepare auth flow and open sidebar
       const { authUrl, state } = await authService.prepareAuthCodeFlow(props.requestId, config)
-      requestStore.setOAuthState(authUrl, state, props.requestId, false)
-      requestStore.setExecutionPhase('authorizing')
+      executionStore.setOAuthState(authUrl, state, props.requestId, false)
+      executionStore.setExecutionPhase('authorizing')
 
       // Wait for callback
       await authService.waitForAuthCallback(props.requestId, state)
-      requestStore.setExecutionPhase('idle')
+      executionStore.setExecutionPhase('idle')
     } else if (isImplicitGrant.value) {
       // Implicit flow uses popup (deprecated flow)
       await authService.initiateImplicitFlow(props.requestId, {
@@ -380,7 +380,7 @@ async function initiateAuth() {
     }
   } catch (error) {
     authError.value = error instanceof Error ? error.message : 'Authorization failed'
-    requestStore.setExecutionPhase('idle')
+    executionStore.setExecutionPhase('idle')
   } finally {
     isAuthorizing.value = false
   }

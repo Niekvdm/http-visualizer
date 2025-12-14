@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
-import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 
 // Child components
 import ResponseViewerHeader, { type ViewTab } from './ResponseViewerHeader.vue'
@@ -14,12 +14,12 @@ import ResponseHeadersView from './tabs/ResponseHeadersView.vue'
 import TimingTabView from './tabs/TimingTabView.vue'
 
 // State
-const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 const activeTab = defineModel<ViewTab>('activeTab', { default: 'response' })
 const isCollapsed = defineModel<boolean>('collapsed', { default: true })
 
 // Execution state from store
-const executionState = computed(() => requestStore.executionState)
+const executionState = computed(() => executionStore.executionState)
 const sentRequest = computed(() => executionState.value.sentRequest)
 const response = computed(() => executionState.value.response)
 const error = computed(() => executionState.value.error)

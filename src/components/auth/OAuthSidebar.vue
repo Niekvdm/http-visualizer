@@ -1,18 +1,18 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useAuthService } from '@/composables/useAuthService'
 import OAuthIframeView from '@/components/viewer/OAuthIframeView.vue'
 import { X, ShieldAlert } from 'lucide-vue-next'
 
-const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 const authService = useAuthService()
 
-const isVisible = computed(() => requestStore.executionState.phase === 'authorizing')
+const isVisible = computed(() => executionStore.executionState.phase === 'authorizing')
 
-const oauthAuthUrl = computed(() => requestStore.executionState.oauthAuthUrl)
-const oauthState = computed(() => requestStore.executionState.oauthState)
-const oauthTokenKey = computed(() => requestStore.executionState.oauthTokenKey)
+const oauthAuthUrl = computed(() => executionStore.executionState.oauthAuthUrl)
+const oauthState = computed(() => executionStore.executionState.oauthState)
+const oauthTokenKey = computed(() => executionStore.executionState.oauthTokenKey)
 const hasOAuthState = computed(() => !!oauthAuthUrl.value && !!oauthState.value && !!oauthTokenKey.value)
 
 const showPanel = ref(false)

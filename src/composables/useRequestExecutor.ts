@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useAuthStore } from '@/stores/authStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
@@ -10,7 +11,10 @@ import { requestLogger } from '@/utils/authLogger'
 import type { ParsedRequest, ExecutionResponse, ExecutionError, HttpAuth, HttpHeader, SentRequest } from '@/types'
 
 export function useRequestExecutor() {
+  // requestStore is kept for backward compatibility during transition
+  // It's used for files lookup in getResolvedVariables
   const requestStore = useRequestStore()
+  const executionStore = useExecutionStore()
   const authStore = useAuthStore()
   const envStore = useEnvironmentStore()
   const collectionStore = useCollectionStore()
@@ -48,7 +52,7 @@ export function useRequestExecutor() {
       // Phase 1: Authentication (if needed)
       if (hasAuth) {
         requestLogger.info('Phase 1: Authentication')
-        requestStore.setExecutionPhase('authenticating')
+        executionStore.setExecutionPhase('authenticating')
 
         // If using auth store config, try to get/refresh tokens
         if (hasConfiguredAuth) {
@@ -78,9 +82,9 @@ export function useRequestExecutor() {
                   // Prepare auth flow (generates URL, state, PKCE) without opening popup
                   const { authUrl, state } = await authService.prepareAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
 
-                  // Set OAuth state in request store and switch to authorizing phase
-                  requestStore.setOAuthState(authUrl, state, tokenKey, false)
-                  requestStore.setExecutionPhase('authorizing')
+                  // Set OAuth state in execution store and switch to authorizing phase
+                  executionStore.setOAuthState(authUrl, state, tokenKey, false)
+                  executionStore.setExecutionPhase('authorizing')
 
                   // Wait for callback (iframe or popup fallback handled by OAuthIframeView)
                   await authService.waitForAuthCallback(tokenKey, state)
@@ -110,7 +114,7 @@ export function useRequestExecutor() {
 
       // Phase 2: Fetching
       requestLogger.info('Phase 2: Fetching')
-      requestStore.setExecutionPhase('fetching')
+      executionStore.setExecutionPhase('fetching')
       
       const startTime = performance.now()
 
@@ -151,7 +155,7 @@ export function useRequestExecutor() {
         viaExtension: bridgeType === 'extension',
         viaProxy: bridgeType === 'proxy',
       }
-      requestStore.executionState.sentRequest = sentRequest
+      executionStore.executionState.sentRequest = sentRequest
 
       // Try to use extension or proxy for CORS bypass, fall back to direct fetch
       if (bridgeType === 'extension' || bridgeType === 'proxy') {
@@ -259,7 +263,7 @@ export function useRequestExecutor() {
       }
 
       // Update store with response
-      requestStore.executionState.response = executionResponse
+      executionStore.executionState.response = executionResponse
       requestLogger.info('Response received', { 
         status: executionResponse.status, 
         statusText: executionResponse.statusText,
@@ -270,10 +274,10 @@ export function useRequestExecutor() {
       // Phase 3: Success or Error based on status
       if (executionResponse.status >= 200 && executionResponse.status < 300) {
         requestLogger.info('Phase 3: Success')
-        requestStore.setExecutionPhase('success')
+        executionStore.setExecutionPhase('success')
         requestLogger.groupEnd()
         // Add to history
-        requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+        executionStore.addToHistory(request.id, request.name, { ...executionStore.executionState })
       } else if (executionResponse.status === 401 && !isRetry) {
         // Check if we can auto-reauth with authorization code flow
         const config = authStore.getAuthConfig(request.id, fileId)
@@ -291,10 +295,10 @@ export function useRequestExecutor() {
             // Prepare auth flow (generates URL, state, PKCE) without opening popup
             const { authUrl, state } = await authService.prepareAuthCodeFlow(tokenKey, config.oauth2AuthorizationCode)
 
-            // Set OAuth state in request store and switch to authorizing phase
+            // Set OAuth state in execution store and switch to authorizing phase
             // This will show the auth tab with iframe in ResponseViewer
-            requestStore.setOAuthState(authUrl, state, tokenKey, false)
-            requestStore.setExecutionPhase('authorizing')
+            executionStore.setOAuthState(authUrl, state, tokenKey, false)
+            executionStore.setExecutionPhase('authorizing')
 
             // Wait for callback (iframe or popup fallback handled by OAuthIframeView)
             await authService.waitForAuthCallback(tokenKey, state)
@@ -311,15 +315,15 @@ export function useRequestExecutor() {
           } catch (authError) {
             // Auth failed or user cancelled - show original 401 error
             requestLogger.warn('Auto-reauth failed or cancelled', authError)
-            requestStore.executionState.error = {
+            executionStore.executionState.error = {
               message: `HTTP 401: ${executionResponse.statusText} (re-authentication failed)`,
               code: '401',
               phase: 'authenticating',
             }
-            requestStore.setExecutionPhase('error')
+            executionStore.setExecutionPhase('error')
             requestLogger.groupEnd()
             // Add to history
-            requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+            executionStore.addToHistory(request.id, request.name, { ...executionStore.executionState })
           }
         } else {
           // No auth code flow configured, show normal 401 error
@@ -327,30 +331,30 @@ export function useRequestExecutor() {
             status: executionResponse.status,
             statusText: executionResponse.statusText
           })
-          requestStore.executionState.error = {
+          executionStore.executionState.error = {
             message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,
             code: String(executionResponse.status),
             phase: 'fetching',
           }
-          requestStore.setExecutionPhase('error')
+          executionStore.setExecutionPhase('error')
           requestLogger.groupEnd()
           // Add to history
-          requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+          executionStore.addToHistory(request.id, request.name, { ...executionStore.executionState })
         }
       } else {
-        requestLogger.warn('Phase 3: HTTP Error', { 
-          status: executionResponse.status, 
-          statusText: executionResponse.statusText 
+        requestLogger.warn('Phase 3: HTTP Error', {
+          status: executionResponse.status,
+          statusText: executionResponse.statusText
         })
-        requestStore.executionState.error = {
+        executionStore.executionState.error = {
           message: `HTTP ${executionResponse.status}: ${executionResponse.statusText}`,
           code: String(executionResponse.status),
           phase: 'fetching',
         }
-        requestStore.setExecutionPhase('error')
+        executionStore.setExecutionPhase('error')
         requestLogger.groupEnd()
         // Add to history
-        requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+        executionStore.addToHistory(request.id, request.name, { ...executionStore.executionState })
       }
 
     } catch (error) {
@@ -377,12 +381,12 @@ export function useRequestExecutor() {
       const executionError: ExecutionError = {
         message: errorMessage,
         code: errorCode,
-        phase: requestStore.executionState.phase,
+        phase: executionStore.executionState.phase,
       }
 
-      requestStore.executionState.error = executionError
-      requestStore.setExecutionPhase('error')
-      requestStore.addToHistory(request.id, request.name, { ...requestStore.executionState })
+      executionStore.executionState.error = executionError
+      executionStore.setExecutionPhase('error')
+      executionStore.addToHistory(request.id, request.name, { ...executionStore.executionState })
       requestLogger.groupEnd()
     } finally {
       stopFunnyTextRotation()
@@ -514,7 +518,7 @@ export function useRequestExecutor() {
 
   function startFunnyTextRotation() {
     funnyTextInterval.value = setInterval(() => {
-      requestStore.updateFunnyText()
+      executionStore.updateFunnyText()
     }, 2000)
   }
 
@@ -531,7 +535,7 @@ export function useRequestExecutor() {
 
   function reset() {
     stopFunnyTextRotation()
-    requestStore.reset()
+    executionStore.reset()
     isExecuting.value = false
   }
 

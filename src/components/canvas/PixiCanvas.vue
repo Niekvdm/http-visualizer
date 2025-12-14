@@ -2,6 +2,7 @@
 import { ref, onMounted, onUnmounted, watch, computed } from 'vue'
 import { Application } from 'pixi.js'
 import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useAuthStore } from '@/stores/authStore'
@@ -11,7 +12,9 @@ import { DataFlowGraph } from './DataFlowGraph'
 import { formatBytes, formatDuration } from '@/utils/formatters'
 
 const containerRef = ref<HTMLDivElement | null>(null)
+// requestStore kept for files access during transition
 const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 const collectionStore = useCollectionStore()
 const themeStore = useThemeStore()
 const authStore = useAuthStore()
@@ -190,7 +193,7 @@ watch(activeRequest, (request) => {
 })
 
 // Watch for execution state changes
-watch(() => requestStore.executionState, (state) => {
+watch(() => executionStore.executionState, (state) => {
   if (!dataFlowGraph) return
 
   dataFlowGraph.setPhase(state.phase, state.funnyText)

@@ -26,6 +26,7 @@ import {
   toggleCollectionCollapse,
   exportCollections,
   importCollections,
+  importCollection,
 } from './collections/collectionCrud'
 
 import {
@@ -135,6 +136,7 @@ export const useCollectionStore = defineStore('collections', () => {
     // Export/Import
     exportCollections,
     importCollections,
+    importCollection,
     clearSelection,
     clearAll,
 

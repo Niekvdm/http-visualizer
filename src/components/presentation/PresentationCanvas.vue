@@ -3,6 +3,7 @@ import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
 import { Application } from 'pixi.js'
 import { usePresentationStore } from '@/stores/presentationStore'
 import { useRequestStore } from '@/stores/requestStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useCollectionStore } from '@/stores/collectionStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
@@ -13,7 +14,9 @@ import { X } from 'lucide-vue-next'
 
 const containerRef = ref<HTMLDivElement | null>(null)
 const presentationStore = usePresentationStore()
+// requestStore kept for files/selection access during transition
 const requestStore = useRequestStore()
+const executionStore = useExecutionStore()
 const collectionStore = useCollectionStore()
 const themeStore = useThemeStore()
 const envStore = useEnvironmentStore()
@@ -24,7 +27,7 @@ let currentRenderer: IPresentationMode | null = null
 const colors = computed(() => themeStore.colors)
 const mode = computed(() => presentationStore.mode)
 const settings = computed(() => presentationStore.settings)
-const responseBody = computed(() => requestStore.executionState.response?.bodyParsed)
+const responseBody = computed(() => executionStore.executionState.response?.bodyParsed)
 
 // Get the currently active request (from imported files or collections)
 const activeRequest = computed(() => {
@@ -195,7 +198,7 @@ let lastPhase: string | null = null
 let lastResponseStatus: number | null = null
 
 // Watch for execution state changes
-watch(() => requestStore.executionState, (state) => {
+watch(() => executionStore.executionState, (state) => {
   if (!currentRenderer) return
 
   // Reset JSON reveal on new execution
@@ -207,10 +210,10 @@ watch(() => requestStore.executionState, (state) => {
   if (state.phase !== lastPhase) {
     lastPhase = state.phase
     lastResponseStatus = null
-    
+
     // Sync presentation store with execution
     presentationStore.syncWithExecution(state, activeRequest.value)
-    
+
     currentRenderer.setPhase(state.phase, state.funnyText)
   }
 

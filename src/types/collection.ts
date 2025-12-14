@@ -4,8 +4,15 @@
  * Focused types for request collections, folders, and related data.
  */
 
-import type { HttpMethod, HttpHeader, BodyType } from './request'
+import type { HttpMethod, HttpHeader, BodyType, RequestSource } from './request'
 import type { HttpAuth } from './auth'
+
+// Import metadata for collections created from file imports
+export interface ImportMetadata {
+  originalFileName: string
+  fileType: 'http' | 'bruno'
+  importedAt: number
+}
 
 // Collection Request (stored in a collection)
 export interface CollectionRequest {
@@ -19,6 +26,8 @@ export interface CollectionRequest {
   auth?: HttpAuth
   variables?: Record<string, string>
   folderId?: string // If in a folder, reference the folder ID
+  source?: RequestSource // Origin of the request (http, bruno, manual)
+  raw?: string // Original raw content for imported requests
   createdAt: number
   updatedAt: number
 }
@@ -42,6 +51,8 @@ export interface Collection {
   requests: CollectionRequest[]
   variables: Record<string, string>
   collapsed: boolean
+  importMetadata?: ImportMetadata // Metadata if collection was created from file import
+  environments?: Record<string, Record<string, string>> // Imported environments from BRU files
   createdAt: number
   updatedAt: number
 }

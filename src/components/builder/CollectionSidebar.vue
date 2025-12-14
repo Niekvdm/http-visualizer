@@ -6,7 +6,8 @@ import CollectionItem from './CollectionItem.vue'
 import NewRequestModal from './NewRequestModal.vue'
 import NewFolderModal from './NewFolderModal.vue'
 import CollectionExportModal from './CollectionExportModal.vue'
-import { Plus, Archive, Download, Upload } from 'lucide-vue-next'
+import ImportWizardModal from './ImportWizardModal.vue'
+import { Plus, Archive, Download, Upload, FileUp } from 'lucide-vue-next'
 
 const emit = defineEmits<{
   'run-request': [requestId: string, collectionId: string]
@@ -27,6 +28,7 @@ const targetCollectionId = ref<string | null>(null)
 const targetFolderId = ref<string | undefined>(undefined)
 const importInput = ref<HTMLInputElement | null>(null)
 const showExportModal = ref(false)
+const showImportWizard = ref(false)
 
 // Create new collection
 function startNewCollection() {
@@ -89,6 +91,19 @@ function closeExportModal() {
   showExportModal.value = false
 }
 
+function openImportWizard() {
+  showImportWizard.value = true
+}
+
+function closeImportWizard() {
+  showImportWizard.value = false
+}
+
+function onImportComplete(collectionId: string) {
+  // Select the newly imported collection
+  collectionStore.selectCollection(collectionId)
+}
+
 async function handleImport(e: Event) {
   const input = e.target as HTMLInputElement
   const file = input.files?.[0]
@@ -126,7 +141,14 @@ async function handleImport(e: Event) {
         </button>
         <button
           class="p-1.5 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-dim)] hover:text-[var(--color-secondary)] transition-colors"
-          title="Import Collections"
+          title="Import HTTP/BRU File"
+          @click="openImportWizard"
+        >
+          <FileUp class="w-4 h-4" />
+        </button>
+        <button
+          class="p-1.5 rounded hover:bg-[var(--color-bg-tertiary)] text-[var(--color-text-dim)] hover:text-[var(--color-secondary)] transition-colors"
+          title="Import Collections (JSON)"
           @click="importInput?.click()"
         >
           <Download class="w-4 h-4" />
@@ -140,9 +162,9 @@ async function handleImport(e: Event) {
         >
           <Upload class="w-4 h-4" />
         </button>
-        <input 
+        <input
           ref="importInput"
-          type="file" 
+          type="file"
           accept=".json"
           class="hidden"
           @change="handleImport"
@@ -226,6 +248,13 @@ async function handleImport(e: Event) {
       :show="showExportModal"
       @close="closeExportModal"
       @exported="closeExportModal"
+    />
+
+    <!-- Import Wizard Modal -->
+    <ImportWizardModal
+      :show="showImportWizard"
+      @close="closeImportWizard"
+      @imported="onImportComplete"
     />
   </div>
 </template>

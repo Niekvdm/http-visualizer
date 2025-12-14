@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
-import { useRequestStore } from '@/stores/requestStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { usePresentationStore } from '@/stores/presentationStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useExecutionStore } from '@/stores/executionStore'
 import { useRequestExecutor } from '@/composables/useRequestExecutor'
 import AppLayout from '@/components/layout/AppLayout.vue'
 import PixiCanvas from '@/components/canvas/PixiCanvas.vue'
@@ -20,23 +20,18 @@ import ConfirmDialogProvider from '@/components/shared/ConfirmDialogProvider.vue
 import OAuthSidebar from '@/components/auth/OAuthSidebar.vue'
 import { X, Play } from 'lucide-vue-next'
 
-const requestStore = useRequestStore()
 const themeStore = useThemeStore()
 const envStore = useEnvironmentStore()
 const presentationStore = usePresentationStore()
 const collectionStore = useCollectionStore()
+const executionStore = useExecutionStore()
 const { executeRequest, isExecuting, isExtensionAvailable, reset } = useRequestExecutor()
 
 // Presentation mode
 const isPresentationMode = computed(() => presentationStore.isPresentationMode)
 
-// Get the currently active request (from imported files or collections)
+// Get the currently active request (from collections only)
 const activeRequest = computed(() => {
-  // If a request is selected in the imported files store, use that
-  if (requestStore.selectedRequest) {
-    return requestStore.selectedRequest
-  }
-  // If a request is selected in the collections store, convert it to executable format
   if (collectionStore.selectedRequest && collectionStore.selectedCollectionId) {
     return collectionStore.toExecutableRequest(
       collectionStore.selectedRequest,
@@ -46,11 +41,8 @@ const activeRequest = computed(() => {
   return null
 })
 
-// Get the source ID for the active request (file ID or collection ID)
+// Get the source ID for the active request (collection ID)
 const activeSourceId = computed(() => {
-  if (requestStore.selectedRequest) {
-    return requestStore.selectedFileId ?? undefined
-  }
   if (collectionStore.selectedRequest) {
     return collectionStore.selectedCollectionId ?? undefined
   }
@@ -65,29 +57,11 @@ const showRequestEditor = ref(false)
 const editingRequestId = ref<string | null>(null)
 const editingCollectionId = ref<string | null>(null)
 
-// Find file ID for a request
-function findFileIdForRequest(requestId: string): string | undefined {
-  for (const file of requestStore.files) {
-    if (file.requests.some(r => r.id === requestId)) {
-      return file.id
-    }
-  }
-  return undefined
-}
-
 // Handle run request event from sidebar or presentation mode
 function handleRunRequest(event: CustomEvent) {
   const requestId = event.detail.requestId
 
-  // First check imported file requests
-  const request = requestStore.allRequests.find(r => r.id === requestId)
-  if (request) {
-    const fileId = findFileIdForRequest(requestId)
-    executeRequest(request, fileId)
-    return
-  }
-
-  // Then check collection requests
+  // Find request in collections
   for (const collection of collectionStore.collections) {
     const collectionRequest = collection.requests.find(r => r.id === requestId)
     if (collectionRequest) {
@@ -138,22 +112,10 @@ function runFromEditor() {
   }
 }
 
-// Import environments from loaded files
-function importEnvironmentsFromFiles() {
-  for (const file of requestStore.files) {
-    if (file.environments) {
-      envStore.importFromFile(file.environments)
-    }
-  }
-}
-
 onMounted(() => {
   // Apply theme on mount
   themeStore.applyTheme()
-  
-  // Import environments from any already loaded files
-  importEnvironmentsFromFiles()
-  
+
   // Listen for run-request events
   window.addEventListener('run-request', handleRunRequest as EventListener)
 })
@@ -192,10 +154,10 @@ onUnmounted(() => {
         </NeonButton>
 
         <!-- Reset button -->
-        <NeonButton 
-          size="sm" 
+        <NeonButton
+          size="sm"
           variant="ghost"
-          :disabled="requestStore.executionState.phase === 'idle'"
+          :disabled="executionStore.executionState.phase === 'idle'"
           @click="reset"
         >
           RESET
