@@ -2,6 +2,7 @@ import { useRequestStore } from '@/stores/requestStore'
 import { useThemeStore } from '@/stores/themeStore'
 import { useEnvironmentStore } from '@/stores/environmentStore'
 import { useCollectionStore } from '@/stores/collectionStore'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
 import type { 
   ExportedSession, 
   CollectionExport, 
@@ -11,18 +12,22 @@ import type {
   CollectionExportOptions,
   ExportPreview,
   SecretScanResult,
+  WorkspaceExport,
+  Workspace,
 } from '@/types'
 import { detectSecrets, redactSecrets } from '@/utils/secretDetection'
 
 const VERSION = '1.2.0'
 const COLLECTION_VERSION = '1.1.0' // Bumped for environment support
 const ENVIRONMENT_VERSION = '1.0.0'
+const WORKSPACE_VERSION = '1.0.0'
 
 export function useFileExport() {
   const requestStore = useRequestStore()
   const themeStore = useThemeStore()
   const envStore = useEnvironmentStore()
   const collectionStore = useCollectionStore()
+  const workspaceStore = useWorkspaceStore()
 
   function exportSession(): void {
     // Get environment state for export
@@ -461,6 +466,155 @@ export function useFileExport() {
     return detectSecrets(collections)
   }
 
+  // ============================================
+  // Workspace Export/Import
+  // ============================================
+
+  /**
+   * Export a workspace with all its collections and environments
+   */
+  function exportWorkspace(workspaceId?: string): void {
+    const targetWorkspaceId = workspaceId || workspaceStore.activeWorkspaceId
+    if (!targetWorkspaceId) {
+      console.warn('No workspace to export')
+      return
+    }
+
+    const workspace = workspaceStore.getWorkspace(targetWorkspaceId)
+    if (!workspace) {
+      console.warn('Workspace not found:', targetWorkspaceId)
+      return
+    }
+
+    // For active workspace, use current data
+    // For other workspaces, we'd need to load from storage (not implemented yet)
+    if (targetWorkspaceId !== workspaceStore.activeWorkspaceId) {
+      console.warn('Can only export the active workspace currently')
+      return
+    }
+
+    const collections = collectionStore.exportCollections()
+    const envState = envStore.exportState()
+
+    const exportData: WorkspaceExport = {
+      version: WORKSPACE_VERSION,
+      exportedAt: new Date().toISOString(),
+      workspace: {
+        id: workspace.id,
+        name: workspace.name,
+        description: workspace.description,
+        color: workspace.color,
+        createdAt: workspace.createdAt,
+        updatedAt: workspace.updatedAt,
+      },
+      collections,
+      environments: envState.environments,
+      activeEnvironmentId: envState.activeEnvironmentId,
+    }
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `workspace-${workspace.name.replace(/\s+/g, '-').toLowerCase()}-${Date.now()}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  /**
+   * Import a workspace from a JSON file
+   */
+  async function importWorkspace(file: File): Promise<{
+    success: boolean
+    error?: string
+    workspaceId?: string
+  }> {
+    try {
+      const content = await file.text()
+      const data = JSON.parse(content) as WorkspaceExport
+
+      // Validate workspace export format
+      if (!data.workspace || !data.collections) {
+        // Check if this might be a collection export instead
+        if (data.collections && Array.isArray(data.collections) && !data.workspace) {
+          return { success: false, error: 'This is a collection export. Use "Import Collections" instead.' }
+        }
+        return { success: false, error: 'Invalid workspace file format' }
+      }
+
+      // Import the workspace
+      const importedWorkspace = workspaceStore.importWorkspace(data.workspace)
+
+      // Save current workspace data before switching
+      collectionStore.saveToStorage()
+      envStore.saveToStorage()
+
+      // Switch to the new workspace
+      workspaceStore.setActiveWorkspace(importedWorkspace.id)
+      
+      // Set workspace ID in stores
+      collectionStore.setCurrentWorkspaceId(importedWorkspace.id)
+      envStore.setCurrentWorkspaceId(importedWorkspace.id)
+
+      // Import collections into the new workspace
+      collectionStore.importCollections(data.collections, false)
+
+      // Import environments if present
+      if (data.environments && Array.isArray(data.environments)) {
+        envStore.importState({
+          environments: data.environments,
+          activeEnvironmentId: data.activeEnvironmentId,
+        })
+      }
+
+      // Save the imported data
+      collectionStore.saveToStorage()
+      envStore.saveToStorage()
+
+      return { success: true, workspaceId: importedWorkspace.id }
+    } catch (error) {
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Failed to import workspace',
+      }
+    }
+  }
+
+  /**
+   * Validate if a file is a valid workspace export
+   */
+  async function validateWorkspaceFile(file: File): Promise<{
+    isValid: boolean
+    workspace?: Workspace
+    collectionCount?: number
+    environmentCount?: number
+    error?: string
+  }> {
+    try {
+      const content = await file.text()
+      const data = JSON.parse(content) as WorkspaceExport
+
+      if (!data.workspace || !data.collections) {
+        return { isValid: false, error: 'Invalid workspace file format' }
+      }
+
+      return {
+        isValid: true,
+        workspace: data.workspace,
+        collectionCount: data.collections.length,
+        environmentCount: data.environments?.length || 0,
+      }
+    } catch (error) {
+      return {
+        isValid: false,
+        error: error instanceof Error ? error.message : 'Failed to read file',
+      }
+    }
+  }
+
   return {
     // Session export/import
     exportSession,
@@ -473,13 +627,18 @@ export function useFileExport() {
     exportCollection,
     importCollections,
     
-    // NEW: Environment export/import
+    // Environment export/import
     exportEnvironments,
     importEnvironments,
     
-    // NEW: Advanced export with options
+    // Advanced export with options
     getExportPreview,
     exportCollectionsWithOptions,
     scanForSecrets,
+
+    // Workspace export/import
+    exportWorkspace,
+    importWorkspace,
+    validateWorkspaceFile,
   }
 }

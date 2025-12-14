@@ -46,3 +46,4 @@ export type StoreName =
   | 'environment'
   | 'presentation'
   | 'settings'
+  | 'workspaces'

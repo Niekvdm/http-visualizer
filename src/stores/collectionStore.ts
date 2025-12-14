@@ -17,6 +17,14 @@ import {
   setupAutoSave,
   findCollectionByRequestId,
   clearAll,
+  // Workspace support
+  setCurrentWorkspaceId,
+  getCurrentWorkspaceId,
+  loadForWorkspace,
+  saveToWorkspace,
+  loadLegacyCollections,
+  removeLegacyStorage,
+  getCollectionCount,
 } from './collections/collectionState'
 
 import {
@@ -143,5 +151,14 @@ export const useCollectionStore = defineStore('collections', () => {
     // Storage
     loadFromStorage,
     saveToStorage,
+
+    // Workspace support
+    setCurrentWorkspaceId,
+    getCurrentWorkspaceId,
+    loadForWorkspace,
+    saveToWorkspace,
+    loadLegacyCollections,
+    removeLegacyStorage,
+    getCollectionCount,
   }
 })

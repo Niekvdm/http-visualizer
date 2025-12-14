@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, onMounted } from 'vue'
 import CollectionSidebar from '@/components/builder/CollectionSidebar.vue'
 import ResponseViewer from '@/components/viewer/ResponseViewer.vue'
+import WorkspaceSwitcher from '@/components/workspace/WorkspaceSwitcher.vue'
+import WorkspaceManagerModal from '@/components/workspace/WorkspaceManagerModal.vue'
+import { useWorkspaceStore } from '@/stores/workspaceStore'
+import { useCollectionStore } from '@/stores/collectionStore'
+import { useEnvironmentStore } from '@/stores/environmentStore'
+
+const workspaceStore = useWorkspaceStore()
+const collectionStore = useCollectionStore()
+const environmentStore = useEnvironmentStore()
 
 const sidebarWidth = ref(320)
+const showWorkspaceManager = ref(false)
 const viewerHeight = ref(300)
 const isDraggingSidebar = ref(false)
 const isDraggingViewer = ref(false)
@@ -62,6 +72,49 @@ function stopViewerDrag() {
   document.removeEventListener('mousemove', onViewerDrag)
   document.removeEventListener('mouseup', stopViewerDrag)
 }
+
+// Initialize workspace system on mount
+onMounted(() => {
+  // Ensure workspace store is initialized with default workspace
+  const activeWorkspaceId = workspaceStore.activeWorkspaceId
+  if (activeWorkspaceId) {
+    // Set workspace ID in collection and environment stores
+    collectionStore.setCurrentWorkspaceId(activeWorkspaceId)
+    environmentStore.setCurrentWorkspaceId(activeWorkspaceId)
+    
+    // Check if migration is needed (first time with workspaces)
+    if (workspaceStore.needsMigration()) {
+      // Migrate existing data to default workspace
+      const legacyCollections = collectionStore.loadLegacyCollections()
+      const legacyEnvironments = environmentStore.loadLegacyEnvironments()
+      
+      if (legacyCollections && legacyCollections.length > 0) {
+        // Import legacy collections into current workspace
+        collectionStore.importCollections(legacyCollections, false)
+      }
+      
+      if (legacyEnvironments && legacyEnvironments.length > 0) {
+        // Import legacy environments into current workspace
+        environmentStore.importState({ environments: legacyEnvironments })
+      }
+      
+      // Mark migration as complete
+      workspaceStore.markMigrationComplete()
+      
+      // Remove legacy storage
+      collectionStore.removeLegacyStorage()
+      environmentStore.removeLegacyStorage()
+    }
+  }
+})
+
+function openWorkspaceManager() {
+  showWorkspaceManager.value = true
+}
+
+function closeWorkspaceManager() {
+  showWorkspaceManager.value = false
+}
 </script>
 
 <template>
@@ -86,12 +139,21 @@ function stopViewerDrag() {
         class="shrink-0 border-r border-[var(--color-border)] bg-[var(--color-bg-secondary)] overflow-hidden flex flex-col"
         :style="{ width: `${sidebarWidth}px` }"
       >
+        <!-- Workspace Switcher -->
+        <WorkspaceSwitcher @open-manager="openWorkspaceManager" />
+        
         <!-- Collection sidebar only (unified system) -->
         <CollectionSidebar
           @run-request="(reqId, colId) => emit('run-collection-request', reqId, colId)"
           @edit-request="(reqId, colId) => emit('edit-collection-request', reqId, colId)"
         />
       </aside>
+      
+      <!-- Workspace Manager Modal -->
+      <WorkspaceManagerModal
+        :show="showWorkspaceManager"
+        @close="closeWorkspaceManager"
+      />
 
       <!-- Sidebar resize handle -->
       <div 

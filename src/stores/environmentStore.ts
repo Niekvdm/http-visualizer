@@ -2,10 +2,26 @@ import { defineStore } from 'pinia'
 import { ref, computed, watch } from 'vue'
 import type { Environment } from '@/types'
 import { generateId } from '@/utils/formatters'
-import { createStorageService } from '@/composables/useStoragePersistence'
+import { createWorkspaceScopedStorage, createStorageService } from '@/composables/useStoragePersistence'
+import { DEFAULT_WORKSPACE_ID } from '@/stores/workspaceStore'
 
-// Storage service for environment persistence
-const envStorage = createStorageService<{
+// Track current workspace ID for storage scoping
+let currentWorkspaceId: string | null = null
+
+// Function to get current workspace ID
+function getWorkspaceId(): string | null {
+  return currentWorkspaceId
+}
+
+// Storage service for environment persistence (workspace-scoped)
+const envStorage = createWorkspaceScopedStorage<{
+  environments: Environment[]
+  activeEnvironmentId: string | null
+  fileOverrides: Record<string, Record<string, string>>
+}>('env-state', 'environment', getWorkspaceId, { storage: 'local' })
+
+// Legacy storage for migration
+const legacyStorage = createStorageService<{
   environments: Environment[]
   activeEnvironmentId: string | null
   fileOverrides: Record<string, Record<string, string>>
@@ -25,8 +41,64 @@ export const useEnvironmentStore = defineStore('environment', () => {
   const fileOverrides = ref<Map<string, Record<string, string>>>(new Map())
   const isInitialized = ref(false)
 
+  /**
+   * Set the current workspace ID for storage operations
+   */
+  function setCurrentWorkspaceId(workspaceId: string | null) {
+    currentWorkspaceId = workspaceId
+  }
+
+  /**
+   * Get the current workspace ID
+   */
+  function getCurrentWorkspaceId(): string | null {
+    return currentWorkspaceId
+  }
+
+  /**
+   * Load environments for a specific workspace
+   */
+  function loadForWorkspace(workspaceId: string) {
+    currentWorkspaceId = workspaceId
+    const data = envStorage.loadForWorkspace(workspaceId)
+    if (data) {
+      if (data.environments && Array.isArray(data.environments)) {
+        environments.value = data.environments
+      } else {
+        resetToDefaults()
+      }
+      if (data.activeEnvironmentId !== undefined) {
+        activeEnvironmentId.value = data.activeEnvironmentId
+      }
+      if (data.fileOverrides) {
+        fileOverrides.value = new Map(Object.entries(data.fileOverrides))
+      }
+    } else {
+      // No data for this workspace yet - reset to defaults
+      resetToDefaults()
+    }
+  }
+
+  // Reset to default state (without saving)
+  function resetToDefaults() {
+    environments.value = [
+      {
+        id: 'default',
+        name: 'Default',
+        variables: {},
+        isDefault: true,
+      },
+    ]
+    activeEnvironmentId.value = 'default'
+    fileOverrides.value = new Map()
+  }
+
   // Initialize from storage (sync for browser)
   function initFromStorageSync() {
+    if (!currentWorkspaceId) {
+      currentWorkspaceId = DEFAULT_WORKSPACE_ID
+    }
+    
     const data = envStorage.loadSync()
     if (data) {
       if (data.environments && Array.isArray(data.environments)) {
@@ -45,6 +117,10 @@ export const useEnvironmentStore = defineStore('environment', () => {
   async function initialize() {
     if (isInitialized.value) return
 
+    if (!currentWorkspaceId) {
+      currentWorkspaceId = DEFAULT_WORKSPACE_ID
+    }
+
     const data = await envStorage.load()
     if (data) {
       if (data.environments && Array.isArray(data.environments)) {
@@ -62,6 +138,8 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
   // Save to storage (fire and forget)
   function saveToStorage() {
+    if (!currentWorkspaceId) return
+    
     const fileOverridesObj: Record<string, Record<string, string>> = {}
     fileOverrides.value.forEach((value, key) => {
       fileOverridesObj[key] = value
@@ -74,6 +152,22 @@ export const useEnvironmentStore = defineStore('environment', () => {
     }
     envStorage.save(data).catch((err) => {
       console.error('Failed to save environment state:', err)
+    })
+  }
+
+  /**
+   * Save environments to a specific workspace
+   */
+  async function saveToWorkspace(workspaceId: string) {
+    const fileOverridesObj: Record<string, Record<string, string>> = {}
+    fileOverrides.value.forEach((value, key) => {
+      fileOverridesObj[key] = value
+    })
+
+    await envStorage.saveToWorkspace(workspaceId, {
+      environments: environments.value,
+      activeEnvironmentId: activeEnvironmentId.value,
+      fileOverrides: fileOverridesObj,
     })
   }
 
@@ -273,16 +367,29 @@ export const useEnvironmentStore = defineStore('environment', () => {
 
   // Reset to defaults
   function reset() {
-    environments.value = [
-      {
-        id: 'default',
-        name: 'Default',
-        variables: {},
-        isDefault: true,
-      },
-    ]
-    activeEnvironmentId.value = 'default'
-    fileOverrides.value = new Map()
+    resetToDefaults()
+  }
+
+  /**
+   * Migration: Load legacy (non-workspace) environments
+   */
+  function loadLegacyEnvironments(): Environment[] | null {
+    const stored = legacyStorage.loadSync()
+    return stored?.environments || null
+  }
+
+  /**
+   * Migration: Remove legacy storage after migration
+   */
+  async function removeLegacyStorage() {
+    await envStorage.removeLegacy()
+  }
+
+  /**
+   * Get environment count for current workspace
+   */
+  function getEnvironmentCount(): number {
+    return environments.value.length
   }
 
   // Initialize on store creation (sync for browser)
@@ -319,5 +426,14 @@ export const useEnvironmentStore = defineStore('environment', () => {
     importState,
     reset,
     saveToStorage,
+
+    // Workspace support
+    setCurrentWorkspaceId,
+    getCurrentWorkspaceId,
+    loadForWorkspace,
+    saveToWorkspace,
+    loadLegacyEnvironments,
+    removeLegacyStorage,
+    getEnvironmentCount,
   }
 })

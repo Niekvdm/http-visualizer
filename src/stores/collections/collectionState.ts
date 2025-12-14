@@ -1,9 +1,26 @@
 import { ref, computed, watch } from 'vue'
-import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
-import { createStorageService } from '@/composables/useStoragePersistence'
+import type { Collection } from '@/types'
+import { createWorkspaceScopedStorage, createStorageService } from '@/composables/useStoragePersistence'
+import { DEFAULT_WORKSPACE_ID } from '@/stores/workspaceStore'
 
-// Storage service for persistence (localStorage in browser, SQLite in Wails)
-const storage = createStorageService<{
+// Track current workspace ID for storage scoping
+let currentWorkspaceId: string | null = null
+
+// Function to get current workspace ID (set by workspaceStore)
+function getWorkspaceId(): string | null {
+  return currentWorkspaceId
+}
+
+// Storage service for persistence (workspace-scoped)
+const storage = createWorkspaceScopedStorage<{
+  collections: Collection[]
+  selectedCollectionId: string | null
+  selectedFolderId: string | null
+  selectedRequestId: string | null
+}>('collections', 'collections', getWorkspaceId)
+
+// Legacy storage for migration
+const legacyStorage = createStorageService<{
   collections: Collection[]
   selectedCollectionId: string | null
   selectedFolderId: string | null
@@ -43,10 +60,50 @@ export const allRequests = computed(() => {
   )
 })
 
+/**
+ * Set the current workspace ID for storage operations
+ * Called by workspaceStore when workspace changes
+ */
+export function setCurrentWorkspaceId(workspaceId: string | null) {
+  currentWorkspaceId = workspaceId
+}
+
+/**
+ * Get the current workspace ID
+ */
+export function getCurrentWorkspaceId(): string | null {
+  return currentWorkspaceId
+}
+
 // Persistence functions
 
-// Sync load for browser (immediate)
+/**
+ * Load collections for a specific workspace
+ */
+export function loadForWorkspace(workspaceId: string) {
+  currentWorkspaceId = workspaceId
+  const stored = storage.loadForWorkspace(workspaceId)
+  if (stored) {
+    collections.value = stored.collections || []
+    selectedCollectionId.value = stored.selectedCollectionId || null
+    selectedFolderId.value = stored.selectedFolderId || null
+    selectedRequestId.value = stored.selectedRequestId || null
+  } else {
+    // No data for this workspace yet
+    collections.value = []
+    selectedCollectionId.value = null
+    selectedFolderId.value = null
+    selectedRequestId.value = null
+  }
+}
+
+// Sync load for browser (immediate) - uses current workspace
 export function loadFromStorageSync() {
+  if (!currentWorkspaceId) {
+    // No workspace set yet, try default
+    currentWorkspaceId = DEFAULT_WORKSPACE_ID
+  }
+  
   const stored = storage.loadSync()
   if (stored) {
     collections.value = stored.collections || []
@@ -60,6 +117,10 @@ export function loadFromStorageSync() {
 export async function initialize() {
   if (isInitialized.value) return
 
+  if (!currentWorkspaceId) {
+    currentWorkspaceId = DEFAULT_WORKSPACE_ID
+  }
+
   const stored = await storage.load()
   if (stored) {
     collections.value = stored.collections || []
@@ -70,8 +131,10 @@ export async function initialize() {
   isInitialized.value = true
 }
 
-// Save to storage (fire and forget)
+// Save to storage (fire and forget) - saves to current workspace
 export function saveToStorage() {
+  if (!currentWorkspaceId) return
+  
   storage
     .save({
       collections: collections.value,
@@ -82,6 +145,18 @@ export function saveToStorage() {
     .catch((e) => {
       console.error('Failed to save collections:', e)
     })
+}
+
+/**
+ * Save collections to a specific workspace
+ */
+export async function saveToWorkspace(workspaceId: string) {
+  await storage.saveToWorkspace(workspaceId, {
+    collections: collections.value,
+    selectedCollectionId: selectedCollectionId.value,
+    selectedFolderId: selectedFolderId.value,
+    selectedRequestId: selectedRequestId.value,
+  })
 }
 
 // Legacy function for backwards compatibility
@@ -117,3 +192,24 @@ export function clearAll() {
   isEditing.value = false
 }
 
+/**
+ * Migration: Load legacy (non-workspace) collections
+ */
+export function loadLegacyCollections(): Collection[] | null {
+  const stored = legacyStorage.loadSync()
+  return stored?.collections || null
+}
+
+/**
+ * Migration: Remove legacy storage after migration
+ */
+export async function removeLegacyStorage() {
+  await storage.removeLegacy()
+}
+
+/**
+ * Get collection count for current workspace
+ */
+export function getCollectionCount(): number {
+  return collections.value.length
+}

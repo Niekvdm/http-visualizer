@@ -156,7 +156,10 @@ export function useStoragePersistence<T>(
 /**
  * Get the full storage key for browser storage
  */
-function getFullKey(key: string, storeName: StoreName): string {
+function getFullKey(key: string, storeName: StoreName, workspaceId?: string): string {
+  if (workspaceId) {
+    return `http-visualizer:${workspaceId}:${storeName}:${key}`
+  }
   return `http-visualizer:${storeName}:${key}`
 }
 
@@ -240,6 +243,178 @@ export function createStorageService<T>(
         return true
       } catch (error) {
         console.error(`Failed to remove from storage [${key}]:`, error)
+        return false
+      }
+    },
+
+    isAsync: isInWails,
+  }
+}
+
+/**
+ * Create a workspace-scoped storage service
+ * Data is stored with workspace ID in the key for isolation
+ */
+export function createWorkspaceScopedStorage<T>(
+  key: string,
+  storeName: StoreName,
+  getWorkspaceId: () => string | null,
+  options: Omit<UseStoragePersistenceOptions<T>, 'key' | 'storeName'> = {},
+) {
+  const {
+    storage = 'local',
+    serialize = JSON.stringify,
+    deserialize = JSON.parse,
+    defaultValue,
+  } = options
+
+  const isInWails = isWails()
+  const asyncStorage = isInWails ? getStorage<string>(storeName) : null
+  const browserStorage = !isInWails ? getBrowserStorage(storage) : null
+
+  function getWorkspaceKey(): string {
+    const workspaceId = getWorkspaceId()
+    if (!workspaceId) {
+      throw new Error('No active workspace')
+    }
+    return `${workspaceId}:${key}`
+  }
+
+  return {
+    async load(): Promise<T | null> {
+      try {
+        const wsKey = getWorkspaceKey()
+        if (asyncStorage) {
+          const stored = await asyncStorage.get(wsKey)
+          if (stored) {
+            return deserialize(stored)
+          }
+        } else if (browserStorage) {
+          const workspaceId = getWorkspaceId()
+          const stored = browserStorage.getItem(getFullKey(key, storeName, workspaceId || undefined))
+          if (stored) {
+            return deserialize(stored)
+          }
+        }
+        return defaultValue ?? null
+      } catch (error) {
+        console.error(`Failed to load from workspace storage [${key}]:`, error)
+        return defaultValue ?? null
+      }
+    },
+
+    loadSync(): T | null {
+      if (browserStorage) {
+        try {
+          const workspaceId = getWorkspaceId()
+          const stored = browserStorage.getItem(getFullKey(key, storeName, workspaceId || undefined))
+          if (stored) {
+            return deserialize(stored)
+          }
+        } catch (error) {
+          console.error(`Failed to load from workspace storage [${key}]:`, error)
+        }
+      }
+      return defaultValue ?? null
+    },
+
+    async save(data: T): Promise<boolean> {
+      try {
+        const serialized = serialize(data)
+        const wsKey = getWorkspaceKey()
+        if (asyncStorage) {
+          await asyncStorage.set(wsKey, serialized)
+        } else if (browserStorage) {
+          const workspaceId = getWorkspaceId()
+          browserStorage.setItem(getFullKey(key, storeName, workspaceId || undefined), serialized)
+        }
+        return true
+      } catch (error) {
+        console.error(`Failed to save to workspace storage [${key}]:`, error)
+        return false
+      }
+    },
+
+    async remove(): Promise<boolean> {
+      try {
+        const wsKey = getWorkspaceKey()
+        if (asyncStorage) {
+          await asyncStorage.remove(wsKey)
+        } else if (browserStorage) {
+          const workspaceId = getWorkspaceId()
+          browserStorage.removeItem(getFullKey(key, storeName, workspaceId || undefined))
+        }
+        return true
+      } catch (error) {
+        console.error(`Failed to remove from workspace storage [${key}]:`, error)
+        return false
+      }
+    },
+
+    /**
+     * Load data for a specific workspace (for migration or export)
+     */
+    loadForWorkspace(workspaceId: string): T | null {
+      if (browserStorage) {
+        try {
+          const stored = browserStorage.getItem(getFullKey(key, storeName, workspaceId))
+          if (stored) {
+            return deserialize(stored)
+          }
+        } catch (error) {
+          console.error(`Failed to load from workspace storage [${key}]:`, error)
+        }
+      }
+      return defaultValue ?? null
+    },
+
+    /**
+     * Save data to a specific workspace (for migration or import)
+     */
+    async saveToWorkspace(workspaceId: string, data: T): Promise<boolean> {
+      try {
+        const serialized = serialize(data)
+        if (asyncStorage) {
+          await asyncStorage.set(`${workspaceId}:${key}`, serialized)
+        } else if (browserStorage) {
+          browserStorage.setItem(getFullKey(key, storeName, workspaceId), serialized)
+        }
+        return true
+      } catch (error) {
+        console.error(`Failed to save to workspace storage [${key}]:`, error)
+        return false
+      }
+    },
+
+    /**
+     * Load from legacy (non-workspace) storage for migration
+     */
+    loadLegacy(): T | null {
+      if (browserStorage) {
+        try {
+          // Legacy key without workspace prefix
+          const stored = browserStorage.getItem(`http-visualizer:${storeName}:${key}`)
+          if (stored) {
+            return deserialize(stored)
+          }
+        } catch (error) {
+          console.error(`Failed to load legacy storage [${key}]:`, error)
+        }
+      }
+      return defaultValue ?? null
+    },
+
+    /**
+     * Remove legacy storage after migration
+     */
+    async removeLegacy(): Promise<boolean> {
+      try {
+        if (browserStorage) {
+          browserStorage.removeItem(`http-visualizer:${storeName}:${key}`)
+        }
+        return true
+      } catch (error) {
+        console.error(`Failed to remove legacy storage [${key}]:`, error)
         return false
       }
     },

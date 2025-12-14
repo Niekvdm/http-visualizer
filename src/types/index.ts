@@ -16,6 +16,7 @@ export * from './auth'
 export * from './request'
 export * from './collection'
 export * from './execution'
+export * from './workspace'
 
 // Theme types (kept here as they don't warrant their own file)
 export interface ThemeColors {
