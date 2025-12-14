@@ -4,7 +4,7 @@ import type { AuthConfig, AuthState, CachedToken, AuthType } from '@/types'
 import { createStorageService } from '@/composables/useStoragePersistence'
 
 // Storage service for auth persistence
-// Uses session storage in browser, SQLite in Tauri (persisted across sessions in Tauri)
+// Uses session storage in browser, SQLite in Wails (persisted across sessions in Wails)
 const authStorage = createStorageService<{
   authConfigs: Record<string, AuthConfig>
   fileAuthConfigs: Record<string, AuthConfig>
@@ -20,7 +20,7 @@ export const useAuthStore = defineStore('auth', () => {
   const cachedTokens = ref<Map<string, CachedToken>>(new Map())
   const isInitialized = ref(false)
 
-  // Initialize from storage (sync for browser, async will override in Tauri)
+  // Initialize from storage (sync for browser, async will override in Wails)
   function initFromStorageSync() {
     const data = authStorage.loadSync()
     if (data) {
@@ -39,7 +39,7 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
-  // Async initialization for Tauri mode
+  // Async initialization for Wails mode
   async function initialize() {
     if (isInitialized.value) return
 
@@ -328,7 +328,7 @@ export const useAuthStore = defineStore('auth', () => {
     saveToStorage()
   }
 
-  // Initialize on store creation (sync for browser, will be overridden by async in Tauri)
+  // Initialize on store creation (sync for browser, will be overridden by async in Wails)
   initFromStorageSync()
 
   return {

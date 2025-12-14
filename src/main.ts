@@ -19,7 +19,7 @@ async function bootstrap() {
   const pinia = createPinia()
   app.use(pinia)
 
-  // Initialize async storage (Tauri SQLite) before mounting
+  // Initialize async storage (Wails SQLite) before mounting
   // This ensures all stores have their data loaded from SQLite
   await initializeStorage()
 

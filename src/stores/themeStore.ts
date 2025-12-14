@@ -192,7 +192,7 @@ const themes: Theme[] = [
 
 const DEFAULT_THEME = 'matrix'
 
-// Synchronous load for initial render (browser only, falls back to default in Tauri)
+// Synchronous load for initial render (browser only, falls back to default in Wails)
 function loadFromStorageSync(): string {
   const stored = themeStorage.loadSync()
   if (stored && themes.some((t) => t.id === stored)) {
@@ -218,12 +218,12 @@ function saveToStorage(themeId: string) {
 }
 
 export const useThemeStore = defineStore('theme', () => {
-  // Use sync load for immediate render (browser only, default in Tauri)
+  // Use sync load for immediate render (browser only, default in Wails)
   const currentThemeId = ref(loadFromStorageSync())
   const customColors = ref<Partial<ThemeColors> | null>(null)
   const isInitialized = ref(false)
 
-  // Async initialization for Tauri mode
+  // Async initialization for Wails mode
   async function initialize() {
     if (isInitialized.value) return
     const storedTheme = await loadFromStorageAsync()

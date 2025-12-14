@@ -1,18 +1,20 @@
 /**
  * Platform detection utilities
- * Detects whether running in Tauri desktop app vs browser
+ * Detects whether running in Wails desktop app vs browser
  */
 
 /**
- * Check if running inside Tauri desktop application
+ * Check if running inside Wails desktop application
+ * Wails exposes Go bindings via window.go
  */
-export function isTauri(): boolean {
-  return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+export function isWails(): boolean {
+  return typeof window !== 'undefined' && 'go' in window
 }
+
 
 /**
  * Check if running in a browser environment
  */
 export function isBrowser(): boolean {
-  return typeof window !== 'undefined' && !isTauri()
+  return typeof window !== 'undefined' && !isWails()
 }

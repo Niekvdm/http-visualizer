@@ -2,12 +2,12 @@
  * API Client
  *
  * Provides a unified interface for HTTP proxy requests
- * Automatically selects Tauri IPC or browser fetch based on platform
+ * Automatically selects Wails IPC or browser fetch based on platform
  */
 
-import { isTauri } from '../storage/platform'
+import { isWails } from '../storage/platform'
 import type { ProxyRequest, ProxyResponse } from './types'
-import * as TauriApiClient from './TauriApiClient'
+import * as WailsApiClient from './WailsApiClient'
 import * as BrowserApiClient from './BrowserApiClient'
 
 export type { ProxyRequest, ProxyResponse } from './types'
@@ -22,11 +22,11 @@ export type {
 
 /**
  * Execute an HTTP proxy request
- * Uses Tauri IPC when in desktop app, fetch when in browser
+ * Uses Wails IPC when in desktop app, fetch when in browser
  */
 export async function proxyRequest(request: ProxyRequest): Promise<ProxyResponse> {
-  if (isTauri()) {
-    return TauriApiClient.proxyRequest(request)
+  if (isWails()) {
+    return WailsApiClient.proxyRequest(request)
   }
   return BrowserApiClient.proxyRequest(request)
 }
@@ -35,8 +35,8 @@ export async function proxyRequest(request: ProxyRequest): Promise<ProxyResponse
  * Check if the backend is healthy
  */
 export async function checkHealth(): Promise<boolean> {
-  if (isTauri()) {
-    return TauriApiClient.checkHealth()
+  if (isWails()) {
+    return WailsApiClient.checkHealth()
   }
   return BrowserApiClient.checkHealth()
 }
@@ -44,6 +44,6 @@ export async function checkHealth(): Promise<boolean> {
 /**
  * Get the current API backend type
  */
-export function getApiBackendType(): 'tauri' | 'browser' {
-  return isTauri() ? 'tauri' : 'browser'
+export function getApiBackendType(): 'wails' | 'browser' {
+  return isWails() ? 'wails' : 'browser'
 }

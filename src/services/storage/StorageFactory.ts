@@ -3,13 +3,13 @@
  *
  * Creates the appropriate storage adapter based on the runtime platform.
  * - Browser: Uses localStorage/sessionStorage via BrowserStorageAdapter
- * - Tauri: Uses SQLite via TauriStorageAdapter
+ * - Wails: Uses SQLite via WailsStorageAdapter
  */
 
 import type { AsyncStorageService, StoreName } from './types'
-import { isTauri } from './platform'
+import { isWails } from './platform'
 import { BrowserStorageAdapter } from './adapters/BrowserStorageAdapter'
-import { TauriStorageAdapter } from './adapters/TauriStorageAdapter'
+import { WailsStorageAdapter } from './adapters/WailsStorageAdapter'
 
 // Cache of storage instances by store name
 const storageCache = new Map<string, AsyncStorageService<unknown>>()
@@ -28,8 +28,8 @@ export function getStorage<T = unknown>(
   const cacheKey = `${storeName}:${useSessionStorage ? 'session' : 'local'}`
 
   if (!storageCache.has(cacheKey)) {
-    const adapter = isTauri()
-      ? new TauriStorageAdapter<T>(storeName)
+    const adapter = isWails()
+      ? new WailsStorageAdapter<T>(storeName)
       : new BrowserStorageAdapter<T>(storeName, useSessionStorage)
 
     storageCache.set(cacheKey, adapter as AsyncStorageService<unknown>)

@@ -2,7 +2,7 @@
  * API Types
  *
  * Shared types for HTTP proxy requests and responses
- * Used by both browser fetch and Tauri IPC implementations
+ * Used by both browser fetch and Wails IPC implementations
  */
 
 export interface ProxyRequest {

@@ -28,7 +28,7 @@ export const useTokenStore = defineStore('tokens', () => {
     }
   }
 
-  // Async initialization for Tauri mode
+  // Async initialization for Wails mode
   async function initialize() {
     if (isInitialized.value) return
 

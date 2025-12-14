@@ -2,7 +2,7 @@
  * Browser Storage Adapter
  *
  * Wraps localStorage/sessionStorage with async interface for consistency
- * Used when running in browser (non-Tauri) environment
+ * Used when running in browser (non-Wails) environment
  */
 
 import type { AsyncStorageService, StoreName } from '../types'

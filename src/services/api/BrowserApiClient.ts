@@ -2,7 +2,7 @@
  * Browser API Client
  *
  * Handles HTTP proxy requests via fetch to the backend server
- * Used when running in a browser (non-Tauri) environment
+ * Used when running in a browser (non-Wails) environment
  */
 
 import type { ProxyRequest, ProxyResponse } from './types'

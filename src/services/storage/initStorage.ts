@@ -1,26 +1,26 @@
 /**
  * Storage Initialization
  *
- * Initializes all stores asynchronously for Tauri mode.
+ * Initializes all stores asynchronously for Wails mode.
  * In browser mode, stores use sync localStorage which is already initialized.
  */
 
-import { isTauri } from './platform'
+import { isWails } from './platform'
 
 /**
  * Initialize all stores that need async storage loading.
  * This should be called early in the app lifecycle (after Pinia is set up).
  *
  * For browser mode: No-op (stores already use sync localStorage)
- * For Tauri mode: Loads data from SQLite via IPC
+ * For Wails mode: Loads data from SQLite via IPC
  */
 export async function initializeStorage(): Promise<void> {
-  if (!isTauri()) {
+  if (!isWails()) {
     // Browser mode - stores already initialized with sync localStorage
     return
   }
 
-  console.log('[Storage] Initializing Tauri storage...')
+  console.log('[Storage] Initializing Wails storage...')
 
   // Import stores dynamically to avoid circular dependencies
   // and ensure Pinia is ready
@@ -43,5 +43,5 @@ export async function initializeStorage(): Promise<void> {
     initializeCollections(),
   ])
 
-  console.log('[Storage] Tauri storage initialized')
+  console.log('[Storage] Wails storage initialized')
 }

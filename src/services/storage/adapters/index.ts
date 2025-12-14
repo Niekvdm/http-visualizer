@@ -1,2 +1,2 @@
 export { BrowserStorageAdapter } from './BrowserStorageAdapter'
-export { TauriStorageAdapter } from './TauriStorageAdapter'
+export { WailsStorageAdapter } from './WailsStorageAdapter'

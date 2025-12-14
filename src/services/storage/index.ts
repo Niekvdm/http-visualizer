@@ -2,7 +2,7 @@
 export type { AsyncStorageService, StoreName } from './types'
 
 // Platform detection
-export { isTauri, isBrowser } from './platform'
+export { isWails, isBrowser } from './platform'
 
 // Factory
 export { getStorage, clearStorageCache } from './StorageFactory'
@@ -11,7 +11,7 @@ export { getStorage, clearStorageCache } from './StorageFactory'
 export { initializeStorage } from './initStorage'
 
 // Adapters (for direct use if needed)
-export { BrowserStorageAdapter, TauriStorageAdapter } from './adapters'
+export { BrowserStorageAdapter, WailsStorageAdapter } from './adapters'
 
 // Legacy sync storage (for backwards compatibility during migration)
 export type { StorageService } from './StorageService'

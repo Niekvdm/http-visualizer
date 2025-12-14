@@ -1,5 +1,5 @@
 import { watch, type Ref, type WatchSource } from 'vue'
-import { isTauri } from '@/services/storage/platform'
+import { isWails } from '@/services/storage/platform'
 import { getStorage, type StoreName } from '@/services/storage'
 
 export type StorageType = 'local' | 'session'
@@ -7,7 +7,7 @@ export type StorageType = 'local' | 'session'
 export interface UseStoragePersistenceOptions<T> {
   /** Storage key */
   key: string
-  /** Store name for Tauri SQLite storage */
+  /** Store name for Wails SQLite storage */
   storeName: StoreName
   /** Type of storage to use (for browser mode) */
   storage?: StorageType
@@ -28,7 +28,7 @@ function getBrowserStorage(type: StorageType): Storage {
 
 /**
  * Composable for persisting reactive state to storage
- * Supports both browser (localStorage/sessionStorage) and Tauri (SQLite) modes
+ * Supports both browser (localStorage/sessionStorage) and Wails (SQLite) modes
  *
  * @param dataRef - Ref or array of refs to persist
  * @param options - Configuration options
@@ -46,10 +46,10 @@ export function useStoragePersistence<T>(
     defaultValue,
   } = options
 
-  // Use async storage adapter for Tauri, direct browser storage otherwise
-  const isInTauri = isTauri()
-  const asyncStorage = isInTauri ? getStorage<string>(storeName) : null
-  const browserStorage = !isInTauri ? getBrowserStorage(storage) : null
+  // Use async storage adapter for Wails, direct browser storage otherwise
+  const isInWails = isWails()
+  const asyncStorage = isInWails ? getStorage<string>(storeName) : null
+  const browserStorage = !isInWails ? getBrowserStorage(storage) : null
 
   /**
    * Load data from storage (async)
@@ -149,7 +149,7 @@ export function useStoragePersistence<T>(
     save,
     remove,
     setupAutoSave,
-    isAsync: isInTauri,
+    isAsync: isInWails,
   }
 }
 
@@ -162,7 +162,7 @@ function getFullKey(key: string, storeName: StoreName): string {
 
 /**
  * Create a simple storage service for a specific key
- * Supports both async (Tauri) and sync (browser) modes
+ * Supports both async (Wails) and sync (browser) modes
  */
 export function createStorageService<T>(
   key: string,
@@ -176,9 +176,9 @@ export function createStorageService<T>(
     defaultValue,
   } = options
 
-  const isInTauri = isTauri()
-  const asyncStorage = isInTauri ? getStorage<string>(storeName) : null
-  const browserStorage = !isInTauri ? getBrowserStorage(storage) : null
+  const isInWails = isWails()
+  const asyncStorage = isInWails ? getStorage<string>(storeName) : null
+  const browserStorage = !isInWails ? getBrowserStorage(storage) : null
 
   return {
     async load(): Promise<T | null> {
@@ -244,6 +244,6 @@ export function createStorageService<T>(
       }
     },
 
-    isAsync: isInTauri,
+    isAsync: isInWails,
   }
 }

@@ -2,14 +2,14 @@
  * Extension Bridge Composable
  *
  * Handles communication with the HTTP Visualizer browser extension
- * for bypassing CORS restrictions. Also supports a Rust proxy backend
+ * for bypassing CORS restrictions. Also supports a Go proxy backend
  * as an alternative when the extension is not available.
  *
- * In Tauri desktop mode, uses IPC commands directly instead of fetch.
+ * In Wails desktop mode, uses IPC commands directly instead of fetch.
  */
 
 import { ref, readonly, onMounted, onUnmounted } from 'vue'
-import { isTauri } from '@/services/storage/platform'
+import { isWails } from '@/services/storage/platform'
 import * as ApiClient from '@/services/api'
 
 // Extension identifier (must match content.js)
@@ -227,16 +227,16 @@ async function checkExtensionAvailability(): Promise<boolean> {
 }
 
 /**
- * Check if the Rust proxy backend is available
- * Only available in Tauri mode (IPC). Browser mode relies on extension only
+ * Check if the Go proxy backend is available
+ * Only available in Wails mode (IPC). Browser mode relies on extension only
  * because server-side proxy cannot access user's localhost.
  */
 async function checkProxyBackendAvailability(): Promise<boolean> {
-  // In Tauri mode, IPC is always available (runs locally, can access localhost)
-  if (isTauri()) {
+  // In Wails mode, IPC is always available (runs locally, can access localhost)
+  if (isWails()) {
     isProxyBackendAvailable.value = true
-    proxyBackendVersion.value = 'tauri-ipc'
-    console.log('[HTTP Visualizer] Tauri IPC backend available')
+    proxyBackendVersion.value = 'wails-ipc'
+    console.log('[Project Tommie] Wails IPC backend available')
     return true
   }
 
@@ -248,7 +248,7 @@ async function checkProxyBackendAvailability(): Promise<boolean> {
 
 /**
  * Execute an HTTP request through the proxy backend
- * Uses Tauri IPC in desktop mode, fetch in browser mode
+ * Uses Wails IPC in desktop mode, fetch in browser mode
  */
 async function executeViaProxy(options: {
   method: string

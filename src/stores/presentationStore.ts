@@ -122,7 +122,7 @@ export const usePresentationStore = defineStore('presentation', () => {
     }
   }
 
-  // Async initialization for Tauri mode
+  // Async initialization for Wails mode
   async function initialize() {
     if (isInitialized.value) return
 

@@ -2,7 +2,7 @@ import { ref, computed, watch } from 'vue'
 import type { Collection, CollectionFolder, CollectionRequest } from '@/types'
 import { createStorageService } from '@/composables/useStoragePersistence'
 
-// Storage service for persistence (localStorage in browser, SQLite in Tauri)
+// Storage service for persistence (localStorage in browser, SQLite in Wails)
 const storage = createStorageService<{
   collections: Collection[]
   selectedCollectionId: string | null
@@ -56,7 +56,7 @@ export function loadFromStorageSync() {
   }
 }
 
-// Async initialization for Tauri mode
+// Async initialization for Wails mode
 export async function initialize() {
   if (isInitialized.value) return
 
