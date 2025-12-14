@@ -1,12 +1,21 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { TlsInfo } from '@/types/execution'
-import { Shield, Lock } from 'lucide-vue-next'
+import { Shield, Lock, Info } from 'lucide-vue-next'
 import SectionHeader from '../shared/SectionHeader.vue'
+import { isWails } from '@/services/storage/platform'
 
 const props = defineProps<{
   tlsInfo: TlsInfo
 }>()
+
+// Detect if running in browser (not desktop)
+const isBrowserMode = computed(() => !isWails())
+
+// Check if certificate details are missing (browser limitation)
+const hasMissingCertDetails = computed(() => {
+  return isBrowserMode.value && !props.tlsInfo.issuer && !props.tlsInfo.subject
+})
 
 const validFromDate = computed(() => {
   if (!props.tlsInfo.validFrom) return '?'
@@ -93,6 +102,17 @@ const hasSANs = computed(() => {
             {{ san }}
           </span>
         </div>
+      </div>
+
+      <!-- Browser limitation notice -->
+      <div
+        v-if="hasMissingCertDetails"
+        class="border-t border-[var(--color-border)] pt-2 flex items-start gap-1.5"
+      >
+        <Info class="w-3 h-3 text-[var(--color-text-dim)] shrink-0 mt-0.5" />
+        <span class="text-[10px] text-[var(--color-text-dim)] leading-tight">
+          Certificate details (issuer, subject, validity) require the desktop app due to browser API limitations.
+        </span>
       </div>
     </div>
   </div>

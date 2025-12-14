@@ -2,13 +2,13 @@
  * Storage Factory
  *
  * Creates the appropriate storage adapter based on the runtime platform.
- * - Browser: Uses localStorage/sessionStorage via BrowserStorageAdapter
+ * - Browser: Uses IndexedDB via IndexedDBAdapter (auto-migrates from localStorage)
  * - Wails: Uses SQLite via WailsStorageAdapter
  */
 
 import type { AsyncStorageService, StoreName } from './types'
 import { isWails } from './platform'
-import { BrowserStorageAdapter } from './adapters/BrowserStorageAdapter'
+import { IndexedDBAdapter } from './adapters/IndexedDBAdapter'
 import { WailsStorageAdapter } from './adapters/WailsStorageAdapter'
 
 // Cache of storage instances by store name
@@ -18,7 +18,7 @@ const storageCache = new Map<string, AsyncStorageService<unknown>>()
  * Get a storage adapter for the specified store
  *
  * @param storeName - The name of the store
- * @param useSessionStorage - For browser, use sessionStorage instead of localStorage (default: false)
+ * @param useSessionStorage - Deprecated, ignored (IndexedDB is always persistent)
  * @returns An async storage service instance
  */
 export function getStorage<T = unknown>(
@@ -30,7 +30,7 @@ export function getStorage<T = unknown>(
   if (!storageCache.has(cacheKey)) {
     const adapter = isWails()
       ? new WailsStorageAdapter<T>(storeName)
-      : new BrowserStorageAdapter<T>(storeName, useSessionStorage)
+      : new IndexedDBAdapter<T>(storeName)
 
     storageCache.set(cacheKey, adapter as AsyncStorageService<unknown>)
   }
