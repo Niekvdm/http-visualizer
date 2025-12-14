@@ -222,6 +222,10 @@ export function useRequestExecutor() {
           requestBodySize: data.requestBodySize,
           connection: data.connection,
           serverSoftware: data.serverSoftware,
+          // DNS/connection details
+          hostname: data.hostname,
+          port: data.port,
+          resolvedIps: data.resolvedIps,
         }
       } else {
         // Direct fetch (may hit CORS)

@@ -59,6 +59,8 @@ export interface TlsInfo {
   validTo?: number
   /** Whether certificate is currently valid */
   valid?: boolean
+  /** Subject Alternative Names (DNS names and IP addresses) */
+  san?: string[]
 }
 
 // Size breakdown
@@ -114,6 +116,12 @@ export interface ExecutionResponse {
   connection?: string
   /** Server software from headers */
   serverSoftware?: string
+  /** Target hostname */
+  hostname?: string
+  /** Target port */
+  port?: string
+  /** All resolved IP addresses from DNS */
+  resolvedIps?: string[]
 }
 
 // Execution Error

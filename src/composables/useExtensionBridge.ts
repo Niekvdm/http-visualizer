@@ -61,6 +61,8 @@ export interface ExtensionTlsInfo {
   validFrom?: number
   validTo?: number
   valid?: boolean
+  /** Subject Alternative Names (DNS names and IP addresses) */
+  san?: string[]
 }
 
 // Size breakdown from extension
@@ -108,6 +110,12 @@ export interface ExtensionResponse {
     connection?: string
     /** Server software from headers */
     serverSoftware?: string
+    /** Hostname from URL */
+    hostname?: string
+    /** Port from URL */
+    port?: string
+    /** All resolved IP addresses from DNS */
+    resolvedIps?: string[]
   }
   error?: {
     message: string
